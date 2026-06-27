@@ -679,10 +679,28 @@
         return { x: c.x + d.x * s, y: c.y + d.y * s };
     }
 
+    function drawSelfEdge(e, n, r) {
+        const g = el('g', { class: 'edge' + (isSel('edge', e.id) ? ' selected' : '') });
+        g.dataset.edge = e.id;
+        const p1 = { x: n.x + n.w * 0.6, y: n.y };               // 上辺から出る
+        const p2 = { x: n.x + n.w, y: n.y + Math.min(42, n.h * 0.45) }; // 右辺へ戻る
+        const topY = n.y - 36, rightX = n.x + n.w + 44;
+        const d = `M${p1.x},${p1.y} C${p1.x},${topY} ${rightX},${p2.y - 30} ${p2.x},${p2.y}`;
+        g.append(el('path', { class: 'edge-hit', d, fill: 'none' }));
+        const line = el('path', { class: 'edge-line', d, fill: 'none' });
+        if (r.dash) line.setAttribute('stroke-dasharray', '7 5');
+        g.append(line);
+        if (r.end !== 'none') g.append(marker(p2, unit({ x: -1, y: 0.2 }), r.end));
+        if (r.start !== 'none') g.append(marker(p1, unit({ x: 0, y: -1 }), r.start));
+        if (e.label) g.append(edgeLabel({ x: rightX + 2, y: topY + 22 }, e.label));
+        return g;
+    }
+
     function drawEdge(e) {
         const a = nodeById(e.from), b = nodeById(e.to);
         if (!a || !b) return null;
         const r = REL[e.type] || REL.association;
+        if (e.from === e.to) return drawSelfEdge(e, a, r);
         let pA = borderPoint(a, center(b));
         let pB = borderPoint(b, center(a));
         const dirEnd = unit(sub(pB, pA));     // points toward B
