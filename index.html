@@ -1,0 +1,1184 @@
+<!DOCTYPE html>
+<html lang="ja" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="ブラウザだけで動くPlantUML（UML）図エディタ。クラス図・シーケンス図・ユースケース図・アクティビティ図などをリアルタイムにプレビューし、SVG/PNGで書き出せます。">
+    <meta name="color-scheme" content="light dark">
+    <title>UML図エディタ (PlantUML)</title>
+    <style>
+        :root {
+            --bg: #f4f5f7;
+            --panel: #ffffff;
+            --panel-2: #fafbfc;
+            --border: #e2e4e8;
+            --border-strong: #c8ccd2;
+            --text: #1f2328;
+            --text-soft: #57606a;
+            --text-faint: #8b949e;
+            --accent: #2563eb;
+            --accent-hover: #1d4ed8;
+            --accent-soft: #eff4ff;
+            --error-bg: #fef2f2; --error-fg: #b42318; --error-bd: #fecaca;
+            --success-bg: #ecfdf3; --success-fg: #067647; --success-bd: #abefc6;
+            --warn-bg: #fffaeb; --warn-fg: #b54708; --warn-bd: #fedf89;
+            --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.04);
+        }
+        [data-theme="dark"] {
+            --bg: #0d1117;
+            --panel: #161b22;
+            --panel-2: #131820;
+            --border: #2a313c;
+            --border-strong: #3d444d;
+            --text: #e6edf3;
+            --text-soft: #adbac7;
+            --text-faint: #768390;
+            --accent: #2f81f7;
+            --accent-hover: #4493f8;
+            --accent-soft: #1c2a3f;
+            --error-bg: #2c1618; --error-fg: #ff7b72; --error-bd: #5c2326;
+            --success-bg: #11261b; --success-fg: #57ab5a; --success-bd: #245430;
+            --warn-bg: #2b2111; --warn-fg: #e3b341; --warn-bd: #5c4413;
+            --shadow: 0 1px 3px rgba(0,0,0,.4);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html, body { height: 100%; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* ---------- Header ---------- */
+        .header {
+            background: var(--panel);
+            border-bottom: 1px solid var(--border);
+            padding: 0 16px;
+            height: 52px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex: none;
+            z-index: 10;
+        }
+        .brand { display: flex; align-items: center; gap: 10px; }
+        .brand .logo {
+            width: 26px; height: 26px; border-radius: 6px;
+            background: linear-gradient(135deg, #2563eb, #7c3aed);
+            display: flex; align-items: center; justify-content: center;
+            color: #fff; font-size: 13px; font-weight: 700;
+        }
+        .brand h1 { font-size: 1.02rem; font-weight: 650; letter-spacing: -.01em; }
+        .header-right { display: flex; align-items: center; gap: 10px; }
+        .status-pill {
+            display: inline-flex; align-items: center; gap: 6px;
+            font-size: .74rem; color: var(--text-faint);
+            padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border);
+            white-space: nowrap;
+        }
+        .status-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); }
+        .status-pill.ok .dot { background: var(--success-fg); }
+        .status-pill.bad .dot { background: var(--error-fg); }
+        .saved-badge { font-size: .72rem; color: var(--text-faint); opacity: 0; transition: opacity .25s; }
+        .saved-badge.show { opacity: 1; }
+
+        /* ---------- Layout ---------- */
+        .main { flex: 1; display: flex; min-height: 0; }
+        .editor-section, .preview-section { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+        .editor-section { flex: 0 0 46%; background: var(--panel); border-right: 1px solid var(--border); }
+        .preview-section { flex: 1; background: var(--panel-2); }
+
+        .divider {
+            flex: none; width: 6px; cursor: col-resize; background: transparent;
+            position: relative; z-index: 5;
+        }
+        .divider::after {
+            content: ''; position: absolute; inset: 0 2px; border-radius: 3px;
+            background: var(--border); transition: background .15s;
+        }
+        .divider:hover::after, .divider.active::after { background: var(--accent); }
+
+        /* ---------- Toolbars ---------- */
+        .toolbar {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 8px; flex-wrap: wrap; background: var(--panel); flex: none;
+        }
+        .preview-section .toolbar { background: var(--panel-2); }
+        .toolbar-label { font-size: .82rem; font-weight: 600; color: var(--text-soft); white-space: nowrap; }
+        .toolbar-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+        .btn {
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 6px 11px; border: 1px solid var(--border-strong);
+            border-radius: 6px; background: var(--panel);
+            font-size: .8rem; font-weight: 500; color: var(--text);
+            cursor: pointer; white-space: nowrap;
+            transition: background .12s, border-color .12s, color .12s, opacity .12s;
+        }
+        .btn:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+        .btn:active { transform: translateY(.5px); }
+        .btn:disabled { opacity: .45; cursor: not-allowed; }
+        .btn:disabled:hover { background: var(--panel); border-color: var(--border-strong); color: var(--text); }
+        .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: #fff; }
+        .btn .ico { font-size: .95em; line-height: 1; }
+        .btn.icon-only { padding: 6px 8px; }
+
+        select.control {
+            padding: 6px 9px; border: 1px solid var(--border-strong); border-radius: 6px;
+            background: var(--panel); color: var(--text); font-size: .8rem; cursor: pointer;
+            max-width: 180px;
+        }
+
+        /* zoom group */
+        .zoom-group { display: inline-flex; align-items: center; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; }
+        .zoom-group .zbtn {
+            width: 30px; height: 30px; border: none; background: var(--panel); color: var(--text-soft);
+            cursor: pointer; font-size: 1rem; display: flex; align-items: center; justify-content: center;
+            border-right: 1px solid var(--border);
+        }
+        .zoom-group .zbtn:last-child { border-right: none; }
+        .zoom-group .zbtn:hover { background: var(--accent-soft); color: var(--accent); }
+        .zoom-level {
+            min-width: 52px; text-align: center; font-size: .76rem; color: var(--text-soft);
+            font-variant-numeric: tabular-nums; user-select: none; border-right: 1px solid var(--border);
+            line-height: 30px; cursor: default;
+        }
+
+        /* ---------- Editor ---------- */
+        .editor-wrap { flex: 1; position: relative; min-height: 0; display: flex; }
+        textarea#code {
+            flex: 1; width: 100%; padding: 14px 16px; border: none; outline: none; resize: none;
+            font-family: 'SF Mono', 'JetBrains Mono', 'Consolas', 'Monaco', monospace;
+            font-size: 13.5px; line-height: 1.6; tab-size: 4;
+            background: var(--panel); color: var(--text);
+        }
+        textarea#code::placeholder { color: var(--text-faint); }
+
+        .editor-status {
+            flex: none; height: 30px; border-top: 1px solid var(--border);
+            display: flex; align-items: center; gap: 14px; padding: 0 14px;
+            font-size: .72rem; color: var(--text-faint); background: var(--panel-2);
+        }
+        .editor-status .sep { flex: 1; }
+
+        /* ---------- Messages ---------- */
+        .msg { padding: 9px 14px; font-size: .8rem; line-height: 1.45; display: none; flex: none; white-space: pre-wrap; border-bottom: 1px solid transparent; }
+        .msg.show { display: block; }
+        .msg.error { background: var(--error-bg); color: var(--error-fg); border-bottom-color: var(--error-bd); font-family: 'SF Mono','Consolas',monospace; }
+        .msg.success { background: var(--success-bg); color: var(--success-fg); border-bottom-color: var(--success-bd); }
+        .msg.warning { background: var(--warn-bg); color: var(--warn-fg); border-bottom-color: var(--warn-bd); }
+
+        /* ---------- Toast ---------- */
+        .toast-host { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
+        .toast {
+            background: var(--text); color: var(--panel); padding: 9px 16px; border-radius: 8px;
+            font-size: .82rem; box-shadow: var(--shadow); opacity: 0; transform: translateY(8px);
+            transition: opacity .2s, transform .2s; max-width: 90vw;
+        }
+        .toast.show { opacity: .96; transform: translateY(0); }
+        .toast.err { background: var(--error-fg); color: #fff; }
+
+        /* ---------- Preview viewport ---------- */
+        .preview-area { flex: 1; position: relative; overflow: hidden; min-height: 0; background:
+            radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0) 0 0 / 22px 22px; }
+        .viewport { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
+        .viewport.grabbable { cursor: grab; }
+        .viewport.grabbing { cursor: grabbing; }
+        #umlOutput {
+            background: #ffffff; border: 1px solid var(--border); border-radius: 8px;
+            padding: 18px; box-shadow: var(--shadow); display: inline-block; line-height: 0;
+        }
+        #umlOutput svg, #umlOutput img { display: block; }
+        .preview-empty {
+            position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+            color: var(--text-faint); font-size: .9rem; text-align: center; padding: 24px; pointer-events: none;
+        }
+        .spinner {
+            position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+            display: none; align-items: center; gap: 8px; background: var(--panel);
+            border: 1px solid var(--border); border-radius: 999px; padding: 5px 14px;
+            font-size: .76rem; color: var(--text-soft); box-shadow: var(--shadow); z-index: 4;
+        }
+        .spinner.show { display: flex; }
+        .spinner i { width: 12px; height: 12px; border: 2px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .hidden { display: none !important; }
+
+        /* ---------- Responsive ---------- */
+        @media (max-width: 860px) {
+            .main { flex-direction: column; }
+            .editor-section { flex: 0 0 auto; height: 45vh; border-right: none; border-bottom: 1px solid var(--border); }
+            .preview-section { flex: 1; }
+            .divider { display: none; }
+            .header-right .status-pill { display: none; }
+        }
+        @media (max-width: 520px) {
+            .toolbar-label { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="brand">
+            <span class="logo" aria-hidden="true">UML</span>
+            <h1>UML図エディタ</h1>
+        </div>
+        <div class="header-right">
+            <span class="status-pill" id="statusPill"><span class="dot"></span><span id="statusText">準備中…</span></span>
+            <span class="saved-badge" id="savedBadge">保存しました</span>
+            <button class="btn icon-only" id="themeBtn" title="ライト/ダーク切替" aria-label="テーマ切替"><span class="ico" id="themeIco">🌙</span></button>
+            <button class="btn icon-only" id="helpBtn" title="ショートカット・使い方" aria-label="ヘルプ"><span class="ico">?</span></button>
+        </div>
+    </header>
+
+    <div class="main">
+        <section class="editor-section" aria-label="エディタ">
+            <div class="toolbar">
+                <div class="toolbar-group">
+                    <button class="btn primary" id="renderBtn" title="レンダリング実行 (Ctrl/Cmd+Enter)"><span class="ico">▶</span>実行</button>
+                    <select class="control" id="templateSelect" aria-label="テンプレートを挿入">
+                        <option value="">テンプレート…</option>
+                    </select>
+                </div>
+                <div class="toolbar-group">
+                    <button class="btn icon-only" id="copyCodeBtn" title="コードをコピー" aria-label="コードをコピー"><span class="ico">⧉</span></button>
+                    <button class="btn icon-only" id="importBtn" title="ファイルを開く (.puml)" aria-label="ファイルを開く"><span class="ico">📂</span></button>
+                    <button class="btn icon-only" id="exportPumlBtn" title="ファイルを保存 (.puml)" aria-label="ファイルを保存"><span class="ico">💾</span></button>
+                    <button class="btn icon-only" id="clearBtn" title="クリア" aria-label="クリア"><span class="ico">🗑</span></button>
+                    <input type="file" id="fileInput" accept=".puml,.pu,.txt,.iuml,text/plain" class="hidden">
+                </div>
+            </div>
+            <div class="editor-wrap">
+                <textarea id="code" spellcheck="false" autocapitalize="off" autocorrect="off"
+                    placeholder="PlantUMLコードを入力… 例:&#10;@startuml&#10;Alice -> Bob : Hello&#10;@enduml"></textarea>
+            </div>
+            <div class="editor-status">
+                <span id="typeLabel">—</span>
+                <span class="sep"></span>
+                <span id="countLabel">0 行 / 0 文字</span>
+            </div>
+        </section>
+
+        <div class="divider" id="divider" role="separator" aria-orientation="vertical" title="ドラッグで幅を調整"></div>
+
+        <section class="preview-section" aria-label="プレビュー">
+            <div class="toolbar">
+                <div class="toolbar-group">
+                    <span class="toolbar-label">プレビュー</span>
+                    <div class="zoom-group" role="group" aria-label="ズーム">
+                        <button class="zbtn" id="zoomOut" title="縮小" aria-label="縮小">−</button>
+                        <span class="zoom-level" id="zoomLevel">100%</span>
+                        <button class="zbtn" id="zoomIn" title="拡大" aria-label="拡大">+</button>
+                        <button class="zbtn" id="zoomFit" title="全体表示 (Shift+F)" aria-label="全体表示">⤢</button>
+                    </div>
+                </div>
+                <div class="toolbar-group">
+                    <select class="control" id="scaleSelect" title="PNG出力解像度" aria-label="PNG出力解像度">
+                        <option value="1">1x</option>
+                        <option value="2" selected>2x</option>
+                        <option value="3">3x</option>
+                        <option value="4">4x</option>
+                    </select>
+                    <button class="btn" id="svgBtn" disabled><span class="ico">⬇</span>SVG</button>
+                    <button class="btn" id="pngBtn" disabled><span class="ico">⬇</span>PNG</button>
+                    <button class="btn icon-only" id="copyImgBtn" title="画像をクリップボードにコピー" aria-label="画像をコピー" disabled><span class="ico">🖼</span></button>
+                    <button class="btn icon-only" id="shareBtn" title="共有リンクをコピー" aria-label="共有リンクをコピー"><span class="ico">🔗</span></button>
+                </div>
+            </div>
+            <div class="msg error" id="error" role="alert"></div>
+            <div class="preview-area" id="previewArea">
+                <div class="spinner" id="spinner"><i></i>レンダリング中…</div>
+                <div class="preview-empty" id="emptyState">コードを入力するとここにプレビューが表示されます</div>
+                <div class="viewport" id="viewport">
+                    <div id="umlOutput"></div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <div class="toast-host" id="toastHost"></div>
+
+    <script type="module">
+        'use strict';
+
+        const $ = id => document.getElementById(id);
+
+        /* ============================================================
+         * PlantUML サーバー
+         *   テキストをエンコードして /svg/<enc> から SVG を取得する。
+         *   複数サーバーをフォールバックで試行。
+         * ============================================================ */
+        const PLANTUML_SERVERS = [
+            'https://www.plantuml.com/plantuml',
+            'https://kroki.io/plantuml'   // ※ /svg/~h<hex> 形式には非対応。deflate時のみ利用
+        ];
+
+        /* ------------------------------------------------------------
+         * pako(deflate) を best-effort で読み込み。
+         *   読み込めれば deflate でコンパクトな URL を生成。
+         *   失敗しても ~h 16進エンコードで動作する（無依存フォールバック）。
+         * ------------------------------------------------------------ */
+        const PAKO_SOURCES = [
+            'https://cdn.jsdelivr.net/npm/pako@2/dist/pako.esm.mjs',
+            'https://unpkg.com/pako@2/dist/pako.esm.mjs',
+            'https://esm.sh/pako@2'
+        ];
+        function withTimeout(promise, ms) {
+            return Promise.race([
+                promise,
+                new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))
+            ]);
+        }
+        let pako = null;
+        (async () => {
+            for (const url of PAKO_SOURCES) {
+                try {
+                    const mod = await withTimeout(import(/* @vite-ignore */ url), 8000);
+                    const p = mod && (mod.default || mod);
+                    if (p && (p.deflateRaw || p.deflate)) { pako = p; break; }
+                } catch (e) {
+                    console.warn('[pako] CDN読込失敗:', url, e.message);
+                }
+            }
+            if (!pako) console.info('[pako] 未読込 — ~h 16進エンコードで動作します');
+        })();
+
+        /* ---- PlantUML 専用 base64 ---- */
+        function encode6bit(b) {
+            if (b < 10) return String.fromCharCode(48 + b);
+            b -= 10;
+            if (b < 26) return String.fromCharCode(65 + b);
+            b -= 26;
+            if (b < 26) return String.fromCharCode(97 + b);
+            b -= 26;
+            if (b === 0) return '-';
+            if (b === 1) return '_';
+            return '?';
+        }
+        function append3bytes(b1, b2, b3) {
+            const c1 = b1 >> 2;
+            const c2 = ((b1 & 0x3) << 4) | (b2 >> 4);
+            const c3 = ((b2 & 0xF) << 2) | (b3 >> 6);
+            const c4 = b3 & 0x3F;
+            return encode6bit(c1 & 0x3F) + encode6bit(c2 & 0x3F) + encode6bit(c3 & 0x3F) + encode6bit(c4 & 0x3F);
+        }
+        function encode64(data) {
+            let r = '';
+            for (let i = 0; i < data.length; i += 3) {
+                if (i + 2 === data.length)      r += append3bytes(data[i], data[i + 1], 0);
+                else if (i + 1 === data.length) r += append3bytes(data[i], 0, 0);
+                else                            r += append3bytes(data[i], data[i + 1], data[i + 2]);
+            }
+            return r;
+        }
+        function toHex(bytes) {
+            let s = '';
+            for (let i = 0; i < bytes.length; i++) s += bytes[i].toString(16).padStart(2, '0');
+            return s;
+        }
+
+        // PlantUML テキスト -> URLパス用エンコード文字列を返す
+        function plantumlEncode(text) {
+            const bytes = new TextEncoder().encode(text);
+            if (pako) {
+                const def = (pako.deflateRaw || pako.deflate).call(pako, bytes, { level: 9 });
+                return encode64(def);          // deflate + plantuml-base64
+            }
+            return '~h' + toHex(bytes);        // 無依存フォールバック（16進）
+        }
+
+        // @start が無ければ @startuml/@enduml で包む
+        function normalizeSource(src) {
+            const s = src.trim();
+            if (/^@start/i.test(s)) return s;
+            return '@startuml\n' + s + '\n@enduml';
+        }
+
+        // サーバーURL一覧を返す（hexは ~h 非対応サーバーを除外）
+        function buildUrls(src, format = 'svg') {
+            const enc = plantumlEncode(normalizeSource(src));
+            const isHex = enc.startsWith('~h');
+            return PLANTUML_SERVERS
+                .filter(base => !isHex || base.includes('plantuml.com'))
+                .map(base => `${base}/${format}/${enc}`);
+        }
+
+        /* ============================================================
+         * Templates (PlantUML)
+         * ============================================================ */
+        const TEMPLATES = {
+            class: ['クラス図', `@startuml
+class 動物 {
+  +名前: String
+  +年齢: int
+  +食べる()
+  +眠る()
+}
+class 犬 {
+  +犬種: String
+  +吠える()
+}
+動物 <|-- 犬
+@enduml`],
+            sequence: ['シーケンス図', `@startuml
+actor ユーザー as U
+participant システム as S
+database DB as D
+U -> S : リクエスト
+S -> D : クエリ
+D --> S : 結果
+S --> U : レスポンス
+@enduml`],
+            usecase: ['ユースケース図', `@startuml
+left to right direction
+actor 利用者 as user
+actor 管理者 as admin
+rectangle システム {
+  user --> (ログイン)
+  user --> (商品検索)
+  user --> (注文する)
+  admin --> (在庫管理)
+  (注文する) ..> (ログイン) : <<include>>
+}
+@enduml`],
+            activity: ['アクティビティ図', `@startuml
+start
+:ログイン;
+if (認証成功?) then (はい)
+  :メニュー表示;
+  repeat
+    :操作を実行;
+  repeat while (続ける?) is (はい)
+  :ログアウト;
+else (いいえ)
+  :エラー表示;
+endif
+stop
+@enduml`],
+            state: ['状態遷移図', `@startuml
+[*] --> 待機
+待機 --> 処理中 : 開始
+処理中 --> 完了 : 成功
+処理中 --> エラー : 失敗
+エラー --> 待機 : リトライ
+完了 --> [*]
+@enduml`],
+            component: ['コンポーネント図', `@startuml
+package "フロントエンド" {
+  [Web UI]
+}
+package "バックエンド" {
+  [API サーバー]
+  [認証サービス]
+}
+database "DB" {
+  [PostgreSQL]
+}
+[Web UI] --> [API サーバー] : HTTP
+[API サーバー] --> [認証サービス]
+[API サーバー] --> [PostgreSQL]
+@enduml`],
+            deployment: ['配置図', `@startuml
+node "Webサーバー" {
+  artifact "app.war"
+}
+node "DBサーバー" {
+  database "PostgreSQL"
+}
+cloud "CDN" {
+  artifact "静的ファイル"
+}
+"Webサーバー" --> "DBサーバー" : JDBC
+"CDN" --> "Webサーバー"
+@enduml`],
+            object: ['オブジェクト図', `@startuml
+object 田中 {
+  名前 = "田中太郎"
+  年齢 = 30
+}
+object 注文1 {
+  番号 = "A-001"
+  金額 = 5000
+}
+田中 --> 注文1 : places
+@enduml`],
+            er: ['ER図 (entity)', `@startuml
+entity 顧客 {
+  * 顧客ID : int
+  --
+  名前 : string
+  メール : string
+}
+entity 注文 {
+  * 注文ID : int
+  --
+  顧客ID : int
+  注文日 : date
+}
+顧客 ||--o{ 注文
+@enduml`],
+            packagediag: ['パッケージ図', `@startuml
+package "ドメイン層" {
+  class 注文
+  class 顧客
+}
+package "アプリ層" {
+  class 注文サービス
+}
+package "インフラ層" {
+  class 注文リポジトリ
+}
+注文サービス --> 注文
+注文サービス --> 注文リポジトリ
+@enduml`],
+            mindmap: ['マインドマップ', `@startmindmap
+* アイデア
+** 企画
+*** 要件
+*** 設計
+** 開発
+*** 実装
+*** テスト
+@endmindmap`],
+            gantt: ['ガント図', `@startgantt
+project starts 2024-01-01
+[要件定義] lasts 14 days
+[基本設計] lasts 10 days
+[基本設計] starts at [要件定義]'s end
+[実装] lasts 21 days
+[実装] starts at [基本設計]'s end
+[テスト] lasts 14 days
+[テスト] starts at [実装]'s end
+@endgantt`],
+            json: ['JSONデータ', `@startjson
+{
+  "name": "山田太郎",
+  "age": 28,
+  "roles": ["admin", "editor"],
+  "address": {
+    "city": "東京",
+    "zip": "100-0001"
+  }
+}
+@endjson`]
+        };
+
+        /* ============================================================
+         * Elements & state
+         * ============================================================ */
+        const code = $('code'),
+              output = $('umlOutput'),
+              viewport = $('viewport'),
+              previewArea = $('previewArea'),
+              errorBox = $('error'),
+              spinner = $('spinner'),
+              emptyState = $('emptyState'),
+              zoomLevel = $('zoomLevel'),
+              savedBadge = $('savedBadge'),
+              statusPill = $('statusPill'),
+              statusText = $('statusText'),
+              typeLabel = $('typeLabel'),
+              countLabel = $('countLabel'),
+              svgBtn = $('svgBtn'),
+              pngBtn = $('pngBtn'),
+              copyImgBtn = $('copyImgBtn');
+
+        const LS_CODE = 'plantuml_code', LS_THEME = 'plantuml_theme';
+
+        let scale = 1, tx = 0, ty = 0;       // viewport transform
+        let naturalW = 0, naturalH = 0;      // rendered svg natural size
+        let hasSvg = false;                  // SVG DOM が取得できているか（exportの可否）
+        let renderToken = 0;
+        let saveTimer, debounceTimer;
+        let theme = localStorage.getItem(LS_THEME) || 'light';
+
+        /* ============================================================
+         * UI helpers
+         * ============================================================ */
+        function toast(text, isErr) {
+            const host = $('toastHost');
+            const el = document.createElement('div');
+            el.className = 'toast' + (isErr ? ' err' : '');
+            el.textContent = text;
+            host.appendChild(el);
+            requestAnimationFrame(() => el.classList.add('show'));
+            setTimeout(() => {
+                el.classList.remove('show');
+                setTimeout(() => el.remove(), 250);
+            }, isErr ? 4000 : 2200);
+        }
+
+        function setStatus(state, text) {
+            statusPill.classList.remove('ok', 'bad');
+            if (state === 'ok') statusPill.classList.add('ok');
+            else if (state === 'bad') statusPill.classList.add('bad');
+            statusText.textContent = text;
+        }
+
+        function showError(text) {
+            errorBox.textContent = text;
+            errorBox.classList.add('show');
+        }
+        function clearError() {
+            errorBox.classList.remove('show');
+        }
+
+        function flashSaved() {
+            savedBadge.classList.add('show');
+            clearTimeout(saveTimer);
+            saveTimer = setTimeout(() => savedBadge.classList.remove('show'), 1400);
+        }
+
+        function save() {
+            try {
+                localStorage.setItem(LS_CODE, code.value);
+                flashSaved();
+            } catch (e) { /* quota/private mode — silent */ }
+        }
+
+        // 図種を推定（表示用のみ）
+        function detectType(src) {
+            let s = src.replace(/^\s*@start\w+.*$/im, m => m)  // keep
+                       .replace(/'.*$/gm, '');                  // line comments
+            const m = s.match(/@start(\w+)/i);
+            const kind = m ? m[1].toLowerCase() : 'uml';
+            const nonUml = {
+                mindmap: 'マインドマップ', gantt: 'ガント図', salt: 'GUIモック',
+                json: 'JSON', yaml: 'YAML', wbs: 'WBS', ditaa: 'ditaa',
+                math: '数式', latex: 'LaTeX', ebnf: 'EBNF', regex: '正規表現'
+            };
+            if (kind !== 'uml' && nonUml[kind]) return nonUml[kind];
+
+            const body = s;
+            if (/left to right direction|usecase\b|\bactor\b[\s\S]*\(.+\)/i.test(body) && /\(.+\)/.test(body)) return 'ユースケース図';
+            if (/\bnode\b|\bartifact\b|\bcloud\b/i.test(body)) return '配置図';
+            if (/\bentity\b/i.test(body)) return 'ER図';
+            if (/\bobject\b/i.test(body)) return 'オブジェクト図';
+            if (/\bclass\b|<\|--|\*--|o--|\.\.\|>/i.test(body)) return 'クラス図';
+            if (/\[\*\]|\bstate\b/i.test(body)) return '状態遷移図';
+            if (/\bstart\b[\s\S]*\bstop\b|^\s*:.*;|\bif\s*\(.*\)\s*then\b/im.test(body)) return 'アクティビティ図';
+            if (/\bcomponent\b|\[[^\]]+\]\s*-+>|\[[^\]]+\]\s*\.\./.test(body)) return 'コンポーネント図';
+            if (/participant|\bactor\b|->|-->/i.test(body)) return 'シーケンス図';
+            return 'UML図';
+        }
+
+        function updateMeta() {
+            const v = code.value;
+            const lines = v ? v.split('\n').length : 0;
+            countLabel.textContent = `${lines} 行 / ${v.length} 文字`;
+            const t = v.trim() ? detectType(v) : '';
+            typeLabel.textContent = t ? `種別: ${t}` : '—';
+        }
+
+        /* ============================================================
+         * Viewport (pan & zoom)
+         * ============================================================ */
+        function applyTransform() {
+            viewport.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+            zoomLevel.textContent = Math.round(scale * 100) + '%';
+        }
+
+        function contentSize() {
+            const r = output.getBoundingClientRect();
+            return { w: r.width / scale, h: r.height / scale };
+        }
+
+        function fitView() {
+            if (!output.firstChild) return;
+            const { w, h } = contentSize();
+            if (!w || !h) return;
+            const pad = 32;
+            const aw = previewArea.clientWidth - pad * 2;
+            const ah = previewArea.clientHeight - pad * 2;
+            scale = Math.max(0.1, Math.min(aw / w, ah / h, 1.6));
+            const cw = w * scale, ch = h * scale;
+            tx = Math.max(pad, (previewArea.clientWidth - cw) / 2);
+            ty = Math.max(pad, (previewArea.clientHeight - ch) / 2);
+            applyTransform();
+        }
+
+        function zoomAt(factor, cx, cy) {
+            const newScale = Math.max(0.1, Math.min(8, scale * factor));
+            const k = newScale / scale;
+            tx = cx - (cx - tx) * k;
+            ty = cy - (cy - ty) * k;
+            scale = newScale;
+            applyTransform();
+        }
+
+        previewArea.addEventListener('wheel', e => {
+            if (!output.firstChild) return;
+            e.preventDefault();
+            const rect = previewArea.getBoundingClientRect();
+            const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+            zoomAt(factor, e.clientX - rect.left, e.clientY - rect.top);
+        }, { passive: false });
+
+        let dragging = false, lastX = 0, lastY = 0, pointerId = null;
+        previewArea.addEventListener('pointerdown', e => {
+            if (!output.firstChild) return;
+            dragging = true; pointerId = e.pointerId;
+            lastX = e.clientX; lastY = e.clientY;
+            viewport.classList.add('grabbing');
+            previewArea.setPointerCapture(e.pointerId);
+        });
+        previewArea.addEventListener('pointermove', e => {
+            if (!dragging || e.pointerId !== pointerId) return;
+            tx += e.clientX - lastX; ty += e.clientY - lastY;
+            lastX = e.clientX; lastY = e.clientY;
+            applyTransform();
+        });
+        function endDrag(e) {
+            if (e.pointerId !== pointerId) return;
+            dragging = false; viewport.classList.remove('grabbing');
+            try { previewArea.releasePointerCapture(e.pointerId); } catch (_) {}
+        }
+        previewArea.addEventListener('pointerup', endDrag);
+        previewArea.addEventListener('pointercancel', endDrag);
+
+        $('zoomIn').onclick = () => zoomAt(1.2, previewArea.clientWidth / 2, previewArea.clientHeight / 2);
+        $('zoomOut').onclick = () => zoomAt(1 / 1.2, previewArea.clientWidth / 2, previewArea.clientHeight / 2);
+        $('zoomFit').onclick = fitView;
+
+        /* ============================================================
+         * Render (PlantUMLサーバーへ問い合わせ)
+         * ============================================================ */
+        function measureSvg(svgEl) {
+            let w = 0, h = 0;
+            const vb = svgEl.viewBox && svgEl.viewBox.baseVal;
+            if (vb && vb.width) { w = vb.width; h = vb.height; }
+            if (!w) {
+                try { const b = svgEl.getBBox(); w = b.width; h = b.height; } catch (_) {}
+            }
+            if (!w) { w = parseFloat(svgEl.getAttribute('width')) || 800; h = parseFloat(svgEl.getAttribute('height')) || 600; }
+            return { w: Math.ceil(w), h: Math.ceil(h) };
+        }
+
+        // PlantUMLエラーSVGからメッセージらしき行を抽出
+        function extractError(svgText) {
+            const texts = [...svgText.matchAll(/<text[^>]*>([\s\S]*?)<\/text>/g)].map(m =>
+                m[1].replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').trim()
+            ).filter(Boolean);
+            return texts.slice(0, 8).join('\n');
+        }
+
+        function disableExports() {
+            svgBtn.disabled = pngBtn.disabled = copyImgBtn.disabled = true;
+        }
+
+        async function render() {
+            const src = code.value.trim();
+            clearError();
+
+            if (!src) {
+                output.innerHTML = '';
+                hasSvg = false;
+                viewport.classList.remove('grabbable');
+                emptyState.classList.remove('hidden');
+                disableExports();
+                setStatus('', '空');
+                return;
+            }
+
+            const token = ++renderToken;
+            spinner.classList.add('show');
+
+            const urls = buildUrls(src, 'svg');
+            let svgText = null, lastErr = null, errorResponse = false;
+
+            for (const url of urls) {
+                try {
+                    const res = await fetch(url, { mode: 'cors' });
+                    const body = await res.text();
+                    if (token !== renderToken) return; // 競合した古い描画は破棄
+                    if (!res.ok) {
+                        // PlantUMLは構文エラー時 HTTP 400 + エラーSVGを返す
+                        lastErr = new Error('HTTP ' + res.status);
+                        if (/<svg/i.test(body)) { svgText = body; errorResponse = true; }
+                        continue;
+                    }
+                    if (!/<svg/i.test(body)) { lastErr = new Error('SVGを取得できませんでした'); continue; }
+                    svgText = body; errorResponse = false;
+                    break;
+                } catch (e) {
+                    if (token !== renderToken) return;
+                    lastErr = e;
+                }
+            }
+
+            if (token !== renderToken) return;
+            spinner.classList.remove('show');
+
+            // どのサーバーにも到達できなかった場合は <img> フォールバックを試す
+            if (!svgText) {
+                spinner.classList.remove('show');
+                renderViaImg(src, token, lastErr);
+                return;
+            }
+
+            // SVGを表示
+            output.innerHTML = svgText;
+            const svgEl = output.querySelector('svg');
+            if (!svgEl) {
+                showError('レンダリングエラー: SVGを生成できませんでした');
+                setStatus('bad', 'エラー');
+                hasSvg = false; disableExports();
+                return;
+            }
+
+            const size = measureSvg(svgEl);
+            naturalW = size.w; naturalH = size.h;
+            svgEl.removeAttribute('style');
+            svgEl.setAttribute('width', naturalW);
+            svgEl.setAttribute('height', naturalH);
+
+            emptyState.classList.add('hidden');
+            viewport.classList.add('grabbable');
+            hasSvg = true;
+            fitView();
+
+            if (errorResponse) {
+                const detail = extractError(svgText) || '構文エラー';
+                showError('構文エラー:\n' + detail);
+                setStatus('bad', '構文エラー');
+                // エラーSVGは表示するが書き出しは無効化
+                disableExports();
+            } else {
+                svgBtn.disabled = pngBtn.disabled = false;
+                copyImgBtn.disabled = !(navigator.clipboard && window.ClipboardItem);
+                setStatus('ok', detectType(src) || 'OK');
+            }
+        }
+
+        // CORS/ネットワークでfetch不可のときの表示専用フォールバック
+        function renderViaImg(src, token, lastErr) {
+            const urls = buildUrls(src, 'svg');
+            if (!urls.length) {
+                showError('サーバーに接続できませんでした: ' + (lastErr ? lastErr.message : '不明'));
+                setStatus('bad', '接続エラー'); disableExports(); return;
+            }
+            const img = new Image();
+            img.onload = () => {
+                if (token !== renderToken) return;
+                output.innerHTML = '';
+                output.appendChild(img);
+                naturalW = img.naturalWidth || 800;
+                naturalH = img.naturalHeight || 600;
+                emptyState.classList.add('hidden');
+                viewport.classList.add('grabbable');
+                hasSvg = false;
+                fitView();
+                setStatus('ok', detectType(src) || 'OK');
+                // SVG DOMが無いため書き出しは不可（CORS未対応サーバー）
+                disableExports();
+                showError('プレビューは表示できましたが、このサーバーはブラウザからの直接取得(CORS)に対応していないため SVG/PNG 書き出しは利用できません。');
+            };
+            img.onerror = () => {
+                if (token !== renderToken) return;
+                showError('サーバーに接続できませんでした: ' + (lastErr ? lastErr.message : 'ネットワークエラー'));
+                setStatus('bad', '接続エラー'); disableExports();
+            };
+            img.src = urls[0];
+        }
+
+        /* ============================================================
+         * Export
+         * ============================================================ */
+        function serializedSVG() {
+            const svg = output.querySelector('svg');
+            if (!svg) return null;
+            const clone = svg.cloneNode(true);
+            clone.removeAttribute('style');
+            clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+            clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+            clone.setAttribute('width', naturalW);
+            clone.setAttribute('height', naturalH);
+            if (!clone.getAttribute('viewBox')) clone.setAttribute('viewBox', `0 0 ${naturalW} ${naturalH}`);
+            return '<?xml version="1.0" encoding="UTF-8"?>\n' +
+                   new XMLSerializer().serializeToString(clone);
+        }
+
+        function download(blob, name) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = name;
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+
+        function tsName(ext) {
+            const d = new Date();
+            const p = n => String(n).padStart(2, '0');
+            return `uml-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
+        }
+
+        function svgToPngBlob(scaleFactor) {
+            return new Promise((resolve, reject) => {
+                const svgStr = serializedSVG();
+                if (!svgStr) return reject(new Error('図がありません'));
+                const url = URL.createObjectURL(new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' }));
+                const img = new Image();
+                img.onload = () => {
+                    try {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = Math.max(1, Math.round(naturalW * scaleFactor));
+                        canvas.height = Math.max(1, Math.round(naturalH * scaleFactor));
+                        const ctx = canvas.getContext('2d');
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                        canvas.toBlob(b => {
+                            URL.revokeObjectURL(url);
+                            b ? resolve(b) : reject(new Error('PNG変換に失敗しました'));
+                        }, 'image/png');
+                    } catch (err) { URL.revokeObjectURL(url); reject(err); }
+                };
+                img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('SVGの画像化に失敗しました')); };
+                img.src = url;
+            });
+        }
+
+        svgBtn.onclick = () => {
+            const s = serializedSVG();
+            if (!s) return toast('図がありません', true);
+            download(new Blob([s], { type: 'image/svg+xml;charset=utf-8' }), tsName('svg'));
+            toast('SVGを保存しました');
+        };
+
+        pngBtn.onclick = async () => {
+            try {
+                const sf = parseFloat($('scaleSelect').value) || 2;
+                const blob = await svgToPngBlob(sf);
+                download(blob, tsName('png'));
+                toast('PNGを保存しました');
+            } catch (e) { toast('PNG保存エラー: ' + e.message, true); }
+        };
+
+        copyImgBtn.onclick = async () => {
+            if (!(navigator.clipboard && window.ClipboardItem)) return toast('このブラウザは画像コピー非対応です', true);
+            try {
+                const blob = await svgToPngBlob(2);
+                await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+                toast('画像をコピーしました');
+            } catch (e) { toast('コピー失敗: ' + e.message, true); }
+        };
+
+        /* ============================================================
+         * Share via URL hash
+         * ============================================================ */
+        function encodeShare(str) { return btoa(unescape(encodeURIComponent(str))); }
+        function decodeShare(b64) { return decodeURIComponent(escape(atob(b64))); }
+
+        $('shareBtn').onclick = async () => {
+            const src = code.value.trim();
+            if (!src) return toast('共有するコードがありません', true);
+            const url = location.origin + location.pathname + '#code=' + encodeShare(src);
+            try {
+                await navigator.clipboard.writeText(url);
+                toast('共有リンクをコピーしました');
+            } catch (_) {
+                history.replaceState(null, '', '#code=' + encodeShare(src));
+                toast('URLを更新しました（アドレスバーを共有）');
+            }
+        };
+
+        /* ============================================================
+         * File import / export
+         * ============================================================ */
+        $('importBtn').onclick = () => $('fileInput').click();
+        $('fileInput').onchange = e => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                code.value = reader.result;
+                save(); updateMeta(); render();
+                toast('読み込みました: ' + file.name);
+            };
+            reader.onerror = () => toast('ファイル読込に失敗しました', true);
+            reader.readAsText(file);
+            e.target.value = '';
+        };
+
+        $('exportPumlBtn').onclick = () => {
+            if (!code.value.trim()) return toast('保存するコードがありません', true);
+            download(new Blob([code.value], { type: 'text/plain;charset=utf-8' }), tsName('puml'));
+            toast('.puml を保存しました');
+        };
+
+        /* ============================================================
+         * Toolbar actions
+         * ============================================================ */
+        $('renderBtn').onclick = () => render();
+
+        $('clearBtn').onclick = () => {
+            if (!code.value || confirm('コードをクリアしますか？')) {
+                code.value = '';
+                localStorage.removeItem(LS_CODE);
+                output.innerHTML = '';
+                hasSvg = false;
+                emptyState.classList.remove('hidden');
+                viewport.classList.remove('grabbable');
+                disableExports();
+                clearError(); updateMeta(); setStatus('', '空');
+            }
+        };
+
+        $('copyCodeBtn').onclick = async () => {
+            if (!code.value) return toast('コピーするコードがありません', true);
+            try { await navigator.clipboard.writeText(code.value); toast('コードをコピーしました'); }
+            catch (_) { code.select(); document.execCommand('copy'); toast('コードをコピーしました'); }
+        };
+
+        // template select
+        const sel = $('templateSelect');
+        Object.entries(TEMPLATES).forEach(([k, [label]]) => {
+            const o = document.createElement('option');
+            o.value = k; o.textContent = label; sel.appendChild(o);
+        });
+        sel.onchange = () => {
+            const k = sel.value;
+            if (!k) return;
+            const insert = () => {
+                code.value = TEMPLATES[k][1];
+                save(); updateMeta(); render();
+                sel.value = '';
+            };
+            if (!code.value.trim() || confirm('現在のコードをテンプレートで置き換えますか？')) insert();
+            else sel.value = '';
+        };
+
+        /* ============================================================
+         * Theme (アプリ外観のみ。図はサーバー描画のため白背景固定)
+         * ============================================================ */
+        function applyTheme() {
+            document.documentElement.setAttribute('data-theme', theme);
+            $('themeIco').textContent = theme === 'dark' ? '☀️' : '🌙';
+        }
+        $('themeBtn').onclick = () => {
+            theme = theme === 'dark' ? 'light' : 'dark';
+            localStorage.setItem(LS_THEME, theme);
+            applyTheme();
+        };
+        applyTheme();
+
+        /* ============================================================
+         * Help
+         * ============================================================ */
+        $('helpBtn').onclick = () => {
+            alert([
+                'UML図エディタ (PlantUML) — 使い方',
+                '',
+                '【ショートカット】',
+                '  Ctrl/Cmd + Enter … レンダリング実行',
+                '  Tab … インデント挿入',
+                '  Shift + F … 全体表示',
+                '  マウスホイール … 拡大縮小',
+                '  ドラッグ … 図の移動（パン）',
+                '',
+                '【機能】',
+                '  ・クラス図/シーケンス図/ユースケース図/アクティビティ図/',
+                '    状態遷移図/コンポーネント図/配置図/オブジェクト図 ほか',
+                '  ・入力は自動保存（ブラウザ内）',
+                '  ・SVG / PNG（最大4x）書き出し',
+                '  ・画像をクリップボードへコピー',
+                '  ・🔗 共有リンク（コードをURLに埋め込み）',
+                '  ・📂/💾 .puml ファイルの読込・保存',
+                '',
+                '【描画について】',
+                '  PlantUML公式サーバーで図を生成します（要インターネット接続）。',
+                '  @startuml が無い場合は自動で補完します。'
+            ].join('\n'));
+        };
+
+        /* ============================================================
+         * Editor events
+         * ============================================================ */
+        code.addEventListener('keydown', e => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); render(); }
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                const s = code.selectionStart, en = code.selectionEnd;
+                code.value = code.value.slice(0, s) + '    ' + code.value.slice(en);
+                code.selectionStart = code.selectionEnd = s + 4;
+                updateMeta();
+            }
+        });
+
+        code.addEventListener('input', () => {
+            save(); updateMeta();
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => render(), 800);
+        });
+
+        document.addEventListener('keydown', e => {
+            if (e.shiftKey && (e.key === 'F' || e.key === 'f') && document.activeElement !== code) {
+                e.preventDefault(); fitView();
+            }
+        });
+
+        let resizeTimer;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimer);
+            resizeTimer = setTimeout(() => { if (output.firstChild) fitView(); }, 150);
+        });
+
+        /* ============================================================
+         * Resizable divider
+         * ============================================================ */
+        (() => {
+            const divider = $('divider');
+            const editor = document.querySelector('.editor-section');
+            const main = document.querySelector('.main');
+            let active = false;
+            divider.addEventListener('pointerdown', e => {
+                active = true; divider.classList.add('active');
+                divider.setPointerCapture(e.pointerId);
+                document.body.style.userSelect = 'none';
+            });
+            divider.addEventListener('pointermove', e => {
+                if (!active) return;
+                const rect = main.getBoundingClientRect();
+                let pct = ((e.clientX - rect.left) / rect.width) * 100;
+                pct = Math.max(25, Math.min(75, pct));
+                editor.style.flex = `0 0 ${pct}%`;
+                if (output.firstChild) fitView();
+            });
+            divider.addEventListener('pointerup', e => {
+                active = false; divider.classList.remove('active');
+                document.body.style.userSelect = '';
+                try { divider.releasePointerCapture(e.pointerId); } catch (_) {}
+            });
+        })();
+
+        /* ============================================================
+         * Init
+         * ============================================================ */
+        (function init() {
+            let initial = '';
+            const m = location.hash.match(/#code=(.+)/);
+            if (m) {
+                try { initial = decodeShare(m[1]); } catch (_) {}
+            }
+            if (!initial) {
+                try { initial = localStorage.getItem(LS_CODE) || ''; } catch (_) {}
+            }
+            if (!initial) initial = TEMPLATES.class[1];
+            code.value = initial;
+            updateMeta();
+            setStatus('', '準備完了');
+            render();
+        })();
+    </script>
+</body>
+</html>
