@@ -265,6 +265,7 @@
         .node.selected .note-rect, .seq-note.selected .note-rect { stroke: var(--sel); stroke-width: 2.2; }
         .node.multi .note-rect { stroke: var(--sel); stroke-dasharray: 5 3; }
         .seq-note { cursor: grab; }
+        .note-anchor { stroke: var(--node-stroke); stroke-width: 1; stroke-dasharray: 4 3; fill: none; opacity: .75; }
 
         .canvas-empty {
             position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -572,6 +573,16 @@
         // edges first (under nodes)
         const ef = document.createDocumentFragment();
         for (const e of state.edges) { const g = drawEdge(e); if (g) ef.append(g); }
+        // ノートのアンカー線
+        for (const n of state.nodes) {
+            if (n.kind === 'note' && n.anchor) {
+                const t = nodeById(n.anchor);
+                if (t && t !== n) {
+                    const a = borderPoint(n, center(t)), b = borderPoint(t, center(n));
+                    ef.append(el('line', { class: 'note-anchor', x1: a.x, y1: a.y, x2: b.x, y2: b.y }));
+                }
+            }
+        }
         edgesLayer.replaceChildren(ef);
         const nf = document.createDocumentFragment();
         for (const n of state.nodes) nf.append(drawNode(n));
@@ -1259,6 +1270,8 @@
             c.id = uid('n'); c.x = o.x + dx; c.y = o.y + dy;
             map.set(id, c.id); return c;
         }).filter(Boolean);
+        // ノートのアンカー先も選択内なら付け替え、外なら解除
+        for (const c of newNodes) if (c.kind === 'note' && c.anchor) { if (map.has(c.anchor)) c.anchor = map.get(c.anchor); else delete c.anchor; }
         // 両端とも選択内にある関連だけ複製
         const newEdges = state.edges.filter(e => map.has(e.from) && map.has(e.to))
             .map(e => Object.assign(JSON.parse(JSON.stringify(e)), { id: uid('e'), from: map.get(e.from), to: map.get(e.to) }));
@@ -1436,10 +1449,14 @@
                 ['f_name', 'f_stereo', 'f_attrs', 'f_methods'].forEach(id => $(id).addEventListener('change', () => { recordEdit(); save(); }));
                 $('f_del').onclick = deleteSelection;
             } else if (kind === 'note') {
+                const others = state.nodes.filter(o => o.id !== n.id && o.kind !== 'note');
+                const aopts = `<option value="">なし</option>` + others.map(o => `<option value="${o.id}" ${o.id === n.anchor ? 'selected' : ''}>${esc(o.name || NODE_LABEL[o.kind] || o.kind)}</option>`).join('');
                 props.innerHTML = `<h3>ノート</h3>
-                    <div class="field"><label>本文</label><textarea id="f_text" placeholder="メモ・注釈">${esc(n.text || '')}</textarea></div>${delBtn}`;
+                    <div class="field"><label>本文</label><textarea id="f_text" placeholder="メモ・注釈">${esc(n.text || '')}</textarea></div>
+                    <div class="field"><label>接続先（任意・破線で結ぶ）</label><select id="f_anchor">${aopts}</select></div>${delBtn}`;
                 $('f_text').oninput = () => { n.text = $('f_text').value; render(); };
                 $('f_text').addEventListener('change', () => { recordEdit(); save(); });
+                $('f_anchor').onchange = () => { const v = $('f_anchor').value; if (v) n.anchor = v; else delete n.anchor; recordEdit(); render(); save(); };
                 $('f_del').onclick = deleteSelection;
             } else if (kind === 'boundary') {
                 props.innerHTML = `<h3>境界</h3>
@@ -2072,6 +2089,7 @@
         .note-rect{fill:${cssVar('--sticky')};stroke:${NS};stroke-width:1}
         .note-fold{fill:none;stroke:${NS};stroke-width:1}
         .note-text{fill:${TX};font:12px ${FONT}}
+        .note-anchor{stroke:${NS};stroke-width:1;stroke-dasharray:4 3;fill:none;opacity:.75}
         .seq-life{stroke:${NS};stroke-width:1.1;stroke-dasharray:4 4}
         .seq-line{stroke:${LN};stroke-width:1.4;fill:none}
         .seq-line.dashed{stroke-dasharray:7 5}
@@ -2324,7 +2342,8 @@ ${inner}
         '  ・関連線ツールを選び、ノードからノードへドラッグして接続',
         '  ・選択ツールでノードをドラッグして移動',
         '  ・右パネルで名前・属性・操作・多重度・ラベルを編集',
-        '  ・「ノート」で付箋（注釈）を全図種に配置できます',
+        '  ・「ノート」で付箋（注釈）を全図種に配置。プロパティの',
+        '    「接続先」で要素へ破線アンカー線を結べます',
         '',
         '【シーケンス図】',
         '  ・ライフライン/アクターでクリックして追加',
