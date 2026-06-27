@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="完全オフラインで動くインタラクティブUMLクラス図エディタ。クラスをドラッグで配置・接続し、SVG/PNGで書き出せます。サーバー不要・依存ライブラリ不要。">
     <meta name="color-scheme" content="light dark">
-    <title>UMLクラス図エディタ</title>
+    <title>UML図エディタ</title>
     <style>
         :root {
             --bg: #f4f5f7;
@@ -223,6 +223,20 @@
         .edge.selected .marker-hollow, .edge.selected .marker-open { stroke: var(--sel); }
         .edge.selected .marker-filled { fill: var(--sel); stroke: var(--sel); }
         .temp-line { stroke: var(--accent); stroke-width: 1.6; stroke-dasharray: 5 4; fill: none; }
+        /* 図形（状態/ユースケース/コンポーネント/インタフェース） */
+        .shape { fill: var(--node-fill); stroke: var(--node-stroke); stroke-width: 1.2; }
+        .pseudo-fill { fill: var(--node-stroke); stroke: none; }
+        .pseudo-ring { fill: var(--node-fill); stroke: var(--node-stroke); stroke-width: 1.4; }
+        .actor-stroke { fill: none; stroke: var(--node-stroke); stroke-width: 1.6; }
+        .actor-head { fill: var(--node-fill); stroke: var(--node-stroke); stroke-width: 1.6; }
+        .node-title { fill: var(--text); font: 600 13px -apple-system,'Segoe UI','Noto Sans JP',sans-serif; }
+        .node-sub { fill: var(--muted); font: italic 11px -apple-system,'Segoe UI','Noto Sans JP',sans-serif; }
+        .boundary-rect { fill: none; stroke: var(--node-stroke); stroke-width: 1.4; stroke-dasharray: 7 5; }
+        .boundary-title { fill: var(--muted); font: 600 12px -apple-system,'Segoe UI','Noto Sans JP',sans-serif; }
+        .comp-icon { fill: var(--node-head); stroke: var(--node-stroke); stroke-width: 1.2; }
+        .node.selected .shape, .node.selected .pseudo-ring, .node.selected .actor-stroke, .node.selected .actor-head { stroke: var(--sel); stroke-width: 2.2; }
+        .node.selected .pseudo-fill { stroke: var(--sel); stroke-width: 3; }
+        .node.multi .shape, .node.multi .pseudo-ring, .node.multi .actor-stroke { stroke: var(--sel); stroke-dasharray: 5 3; }
 
         .canvas-empty {
             position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -251,7 +265,7 @@
     <header class="header">
         <div class="brand">
             <span class="logo" aria-hidden="true">UML</span>
-            <h1>UMLクラス図エディタ</h1>
+            <h1>UML図エディタ</h1>
         </div>
         <div class="header-right">
             <span class="status-pill" id="statusPill"><span class="dot"></span><span id="statusText">準備中…</span></span>
@@ -267,6 +281,12 @@
         <section class="side" aria-label="ツール">
             <div class="toolbar">
                 <div class="toolbar-group">
+                    <select class="btn" id="diagramType" title="図の種類" aria-label="図の種類" style="padding:6px 9px;font-weight:600;">
+                        <option value="class">クラス図</option>
+                        <option value="state">状態遷移図</option>
+                        <option value="usecase">ユースケース図</option>
+                        <option value="component">コンポーネント図</option>
+                    </select>
                     <select class="btn" id="templateSelect" aria-label="テンプレート" style="padding:6px 9px;">
                         <option value="">テンプレート…</option>
                     </select>
@@ -326,7 +346,7 @@
             <div class="canvas-wrap" id="canvasWrap">
                 <div class="canvas-area" id="canvasArea">
                     <svg id="canvas" xmlns="http://www.w3.org/2000/svg"></svg>
-                    <div class="canvas-empty" id="emptyState">「クラス追加」を選んでキャンバスをクリック、または上のテンプレートから開始</div>
+                    <div class="canvas-empty" id="emptyState">左のツールでノードを選んでキャンバスをクリック、または上のテンプレートから開始</div>
                 </div>
                 <div class="text-drawer" id="textDrawer" hidden>
                     <div class="drawer-head">
@@ -361,16 +381,37 @@
         realization: { label: '実現',  dash: true,  start: 'none',         end: 'triangle' },
         dependency:  { label: '依存',  dash: true,  start: 'none',         end: 'open' },
         aggregation: { label: '集約',  dash: false, start: 'diamond',      end: 'none' },
-        composition: { label: '合成',  dash: false, start: 'diamondFilled', end: 'none' }
+        composition: { label: '合成',  dash: false, start: 'diamondFilled', end: 'none' },
+        // 他図種用
+        transition:  { label: '遷移',  dash: false, start: 'none',         end: 'open' },
+        include:     { label: '«include»', dash: true,  start: 'none',     end: 'open' },
+        extend:      { label: '«extend»',  dash: true,  start: 'none',     end: 'open' }
     };
-    const TOOLS = ['select', 'class', 'association', 'directed', 'inheritance', 'realization', 'dependency', 'aggregation', 'composition'];
-    const TOOL_LABEL = { select: '選択', class: 'クラス追加' };
+    const DEFAULT_EDGE_LABEL = { include: '«include»', extend: '«extend»' };
 
-    // パレット用の小さなプレビューSVG
+    // 図種ごとの定義（ノード種別 / 関連ツール）
+    const DIAGRAMS = {
+        class: { label: 'クラス図',
+            nodes: [{ kind: 'class', label: 'クラス' }],
+            rels: ['association', 'directed', 'inheritance', 'realization', 'dependency', 'aggregation', 'composition'] },
+        state: { label: '状態遷移図',
+            nodes: [{ kind: 'state', label: '状態' }, { kind: 'initial', label: '開始' }, { kind: 'final', label: '終了' }],
+            rels: ['transition'] },
+        usecase: { label: 'ユースケース図',
+            nodes: [{ kind: 'actor', label: 'アクター' }, { kind: 'usecase', label: 'ユースケース' }, { kind: 'boundary', label: '境界' }],
+            rels: ['association', 'directed', 'include', 'extend', 'inheritance'] },
+        component: { label: 'コンポーネント図',
+            nodes: [{ kind: 'component', label: 'コンポーネント' }, { kind: 'interface', label: 'インタフェース' }, { kind: 'boundary', label: '境界' }],
+            rels: ['dependency', 'association', 'directed'] }
+    };
+    const NODE_LABEL = { class: 'クラス', state: '状態', initial: '開始', final: '終了', actor: 'アクター', usecase: 'ユースケース', boundary: '境界', component: 'コンポーネント', interface: 'インタフェース' };
+    const TOOL_LABEL = { select: '選択' };
+
+    // パレット用の小さなプレビューSVG（ツールid: 'select' / 'add:<kind>' / 'rel:<type>'）
     function toolGlyph(t) {
         if (t === 'select') return '<svg viewBox="0 0 26 16"><path d="M5 2 L5 13 L8 10 L10 14 L12 13 L10 9 L14 9 Z" fill="currentColor" stroke="currentColor" stroke-width="1"/></svg>';
-        if (t === 'class') return '<svg viewBox="0 0 26 16"><rect x="4" y="2" width="18" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/><line x1="4" y1="6" x2="22" y2="6" stroke="currentColor" stroke-width="1.1"/></svg>';
-        const r = REL[t];
+        if (t.startsWith('add:')) return nodeGlyph(t.slice(4));
+        const r = REL[t.slice(4)];
         const dash = r.dash ? 'stroke-dasharray="3 2"' : '';
         let s = `<svg viewBox="0 0 26 16"><line x1="3" y1="8" x2="20" y2="8" stroke="currentColor" stroke-width="1.3" ${dash}/>`;
         if (r.end === 'open') s += '<path d="M20 8 L15 5 M20 8 L15 11" stroke="currentColor" stroke-width="1.3" fill="none"/>';
@@ -379,11 +420,31 @@
         if (r.start === 'diamondFilled') s += '<path d="M3 8 L7 5.5 L11 8 L7 10.5 Z" fill="currentColor" stroke="currentColor" stroke-width="1.3"/>';
         return s + '</svg>';
     }
+    function nodeGlyph(kind) {
+        const w = 'stroke="currentColor" stroke-width="1.3" fill="none"';
+        switch (kind) {
+            case 'class': return `<svg viewBox="0 0 26 16"><rect x="4" y="2" width="18" height="12" rx="1" ${w}/><line x1="4" y1="6" x2="22" y2="6" stroke="currentColor" stroke-width="1.1"/></svg>`;
+            case 'state': return `<svg viewBox="0 0 26 16"><rect x="3" y="3" width="20" height="10" rx="5" ${w}/></svg>`;
+            case 'initial': return `<svg viewBox="0 0 26 16"><circle cx="13" cy="8" r="5" fill="currentColor"/></svg>`;
+            case 'final': return `<svg viewBox="0 0 26 16"><circle cx="13" cy="8" r="6" ${w}/><circle cx="13" cy="8" r="3" fill="currentColor"/></svg>`;
+            case 'actor': return `<svg viewBox="0 0 26 16"><circle cx="13" cy="4" r="2.4" ${w}/><line x1="13" y1="6" x2="13" y2="11" ${w}/><line x1="9" y1="8" x2="17" y2="8" ${w}/><line x1="13" y1="11" x2="10" y2="15" ${w}/><line x1="13" y1="11" x2="16" y2="15" ${w}/></svg>`;
+            case 'usecase': return `<svg viewBox="0 0 26 16"><ellipse cx="13" cy="8" rx="10" ry="6" ${w}/></svg>`;
+            case 'boundary': return `<svg viewBox="0 0 26 16"><rect x="3" y="2" width="20" height="12" rx="1" stroke="currentColor" stroke-width="1.3" fill="none" stroke-dasharray="3 2"/></svg>`;
+            case 'component': return `<svg viewBox="0 0 26 16"><rect x="5" y="3" width="16" height="10" ${w}/><rect x="3" y="5" width="4" height="2.4" ${w}/><rect x="3" y="9" width="4" height="2.4" ${w}/></svg>`;
+            case 'interface': return `<svg viewBox="0 0 26 16"><circle cx="13" cy="8" r="5" ${w}/></svg>`;
+        }
+        return `<svg viewBox="0 0 26 16"><rect x="4" y="3" width="18" height="10" ${w}/></svg>`;
+    }
+    // 関連ツールid → 実際のエッジtype（現状は同一だが将来の別名用）
+    function relType(id) { return id; }
 
     /* ============================================================
-     * State
+     * State / Project（図種ごとに独立したダイアグラムを保持）
      * ============================================================ */
-    let state = { nodes: [], edges: [] };
+    function emptyDiagram() { return { nodes: [], edges: [] }; }
+    let project = { type: 'class', diagrams: { class: emptyDiagram(), state: emptyDiagram(), usecase: emptyDiagram(), component: emptyDiagram() } };
+    let state = project.diagrams.class;   // アクティブなダイアグラム
+    function diagramType() { return project.type; }
     let selection = null;          // {kind:'node'|'edge', id}  ← プロパティ表示用の主選択
     let selNodes = new Set();      // 複数選択中のノードid
     let clipboard = null;          // コピーしたノード群
@@ -420,20 +481,27 @@
      * ============================================================ */
     const PADX = 12, LINE = 18, NAMEH = 22;
     function layoutNode(n) {
-        const nameFont = "600 14px " + FONT;
-        const stereoFont = "italic 12px " + FONT;
-        const memFont = "13px " + MFONT;
-        const attrs = n.attributes || [], methods = n.methods || [];
-        let maxW = measure(n.name || 'Class', nameFont);
-        if (n.stereotype) maxW = Math.max(maxW, measure('«' + n.stereotype + '»', stereoFont));
-        for (const a of attrs) maxW = Math.max(maxW, measure(a, memFont));
-        for (const m of methods) maxW = Math.max(maxW, measure(m, memFont));
-        n.w = Math.max(130, Math.ceil(maxW) + PADX * 2);
-        const headH = (n.stereotype ? 16 : 0) + NAMEH + 8;
-        const attrH = attrs.length ? attrs.length * LINE + 8 : 12;
-        const methH = methods.length ? methods.length * LINE + 8 : 12;
-        n._headH = headH; n._attrH = attrH; n._methH = methH;
-        n.h = headH + attrH + methH;
+        const kind = n.kind || 'class';
+        const titleFont = "600 13px " + FONT;
+        if (kind === 'class') {
+            const nameFont = "600 14px " + FONT, stereoFont = "italic 12px " + FONT, memFont = "13px " + MFONT;
+            const attrs = n.attributes || [], methods = n.methods || [];
+            let maxW = measure(n.name || 'Class', nameFont);
+            if (n.stereotype) maxW = Math.max(maxW, measure('«' + n.stereotype + '»', stereoFont));
+            for (const a of attrs) maxW = Math.max(maxW, measure(a, memFont));
+            for (const m of methods) maxW = Math.max(maxW, measure(m, memFont));
+            n.w = Math.max(130, Math.ceil(maxW) + PADX * 2);
+            const headH = (n.stereotype ? 16 : 0) + NAMEH + 8;
+            n._headH = headH; n._attrH = attrs.length ? attrs.length * LINE + 8 : 12; n._methH = methods.length ? methods.length * LINE + 8 : 12;
+            n.h = headH + n._attrH + n._methH;
+        } else if (kind === 'initial') { n.w = 20; n.h = 20; }
+        else if (kind === 'final') { n.w = 26; n.h = 26; }
+        else if (kind === 'actor') { n.w = Math.max(40, measure(n.name || 'Actor', titleFont)); n.h = 64; }
+        else if (kind === 'usecase') { const tw = measure(n.name || 'UseCase', titleFont); n.w = Math.max(110, Math.ceil(tw) + 44); n.h = 56; }
+        else if (kind === 'boundary') { n.w = Math.max(160, n.w || 280); n.h = Math.max(120, n.h || 200); }
+        else if (kind === 'component') { const tw = measure(n.name || 'Component', titleFont); n.w = Math.max(150, Math.ceil(tw) + 56); n.h = 58; }
+        else if (kind === 'interface') { const tw = measure(n.name || 'Interface', titleFont); n.w = Math.max(96, Math.ceil(tw) + 30); n.h = 58; }
+        else { n.w = Math.max(110, measure(n.name || '', titleFont) + 24); n.h = 48; }
     }
 
     /* ============================================================
@@ -457,7 +525,7 @@
         nodesLayer.replaceChildren(nf);
         applyView();
         $('emptyState').classList.toggle('hidden', state.nodes.length > 0);
-        $('countLabel').textContent = `${state.nodes.length} クラス / ${state.edges.length} 関連`;
+        $('countLabel').textContent = `${state.nodes.length} ノード / ${state.edges.length} 関連`;
         $('undoBtn').disabled = !history.length;
         $('redoBtn').disabled = !future.length;
         syncTextFromDiagram();
@@ -467,21 +535,53 @@
         const cls = 'node' + (isSel('node', n.id) ? ' selected' : '') + (selNodes.has(n.id) && !isSel('node', n.id) ? ' multi' : '');
         const g = el('g', { class: cls, transform: `translate(${n.x},${n.y})` });
         g.dataset.node = n.id;
-        g.append(el('rect', { class: 'node-rect', x: 0, y: 0, width: n.w, height: n.h, rx: 3 }));
-        g.append(el('rect', { class: 'node-head', x: 1, y: 1, width: n.w - 2, height: n._headH - 1, rx: 2 }));
-        let y = 0;
-        if (n.stereotype) {
-            y += 14;
-            g.append(text(n.w / 2, y, '«' + n.stereotype + '»', 'node-stereo', 'middle'));
+        const kind = n.kind || 'class';
+        const W = n.w, H = n.h, cx = W / 2, cy = H / 2;
+
+        if (kind === 'class') {
+            g.append(el('rect', { class: 'node-rect', x: 0, y: 0, width: W, height: H, rx: 3 }));
+            g.append(el('rect', { class: 'node-head', x: 1, y: 1, width: W - 2, height: n._headH - 1, rx: 2 }));
+            if (n.stereotype) g.append(text(cx, 14, '«' + n.stereotype + '»', 'node-stereo', 'middle'));
+            g.append(text(cx, n.stereotype ? 14 + NAMEH - 6 : NAMEH - 2, n.name || 'Class', 'node-name', 'middle'));
+            g.append(el('line', { class: 'compartment-sep', x1: 0, y1: n._headH, x2: W, y2: n._headH }));
+            let ay = n._headH + 14;
+            for (const a of (n.attributes || [])) { g.append(text(PADX, ay, a, 'node-member', 'start')); ay += LINE; }
+            g.append(el('line', { class: 'compartment-sep', x1: 0, y1: n._headH + n._attrH, x2: W, y2: n._headH + n._attrH }));
+            let my = n._headH + n._attrH + 14;
+            for (const m of (n.methods || [])) { g.append(text(PADX, my, m, 'node-member', 'start')); my += LINE; }
+        } else if (kind === 'state') {
+            g.append(el('rect', { class: 'shape', x: 0, y: 0, width: W, height: H, rx: 12, ry: 12 }));
+            g.append(text(cx, cy + 4, n.name || 'State', 'node-title', 'middle'));
+        } else if (kind === 'initial') {
+            g.append(el('circle', { class: 'pseudo-fill', cx, cy, r: W / 2 - 1 }));
+        } else if (kind === 'final') {
+            g.append(el('circle', { class: 'pseudo-ring', cx, cy, r: W / 2 - 1 }));
+            g.append(el('circle', { class: 'pseudo-fill', cx, cy, r: W / 2 - 6 }));
+        } else if (kind === 'actor') {
+            const hx = cx, r = 7;
+            g.append(el('circle', { class: 'actor-head', cx: hx, cy: r + 2, r }));
+            g.append(el('line', { class: 'actor-stroke', x1: hx, y1: r * 2 + 2, x2: hx, y2: 36 }));
+            g.append(el('line', { class: 'actor-stroke', x1: hx - 12, y1: 26, x2: hx + 12, y2: 26 }));
+            g.append(el('line', { class: 'actor-stroke', x1: hx, y1: 36, x2: hx - 11, y2: 50 }));
+            g.append(el('line', { class: 'actor-stroke', x1: hx, y1: 36, x2: hx + 11, y2: 50 }));
+            g.append(text(cx, 62, n.name || 'Actor', 'node-title', 'middle'));
+        } else if (kind === 'usecase') {
+            g.append(el('ellipse', { class: 'shape', cx, cy, rx: W / 2, ry: H / 2 }));
+            g.append(text(cx, cy + 4, n.name || 'UseCase', 'node-title', 'middle'));
+        } else if (kind === 'boundary') {
+            g.append(el('rect', { class: 'boundary-rect', x: 0, y: 0, width: W, height: H, rx: 4 }));
+            g.append(text(12, 20, n.name || 'System', 'boundary-title', 'start'));
+        } else if (kind === 'component') {
+            g.append(el('rect', { class: 'shape', x: 0, y: 0, width: W, height: H, rx: 2 }));
+            g.append(el('rect', { class: 'comp-icon', x: W - 22, y: 8, width: 14, height: 10 }));
+            g.append(el('rect', { class: 'comp-icon', x: W - 26, y: 10, width: 6, height: 2.5 }));
+            g.append(el('rect', { class: 'comp-icon', x: W - 26, y: 14, width: 6, height: 2.5 }));
+            g.append(text(cx, cy - 4, '«component»', 'node-sub', 'middle'));
+            g.append(text(cx, cy + 13, n.name || 'Component', 'node-title', 'middle'));
+        } else if (kind === 'interface') {
+            g.append(el('circle', { class: 'shape', cx, cy: 18, r: 14 }));
+            g.append(text(cx, 50, n.name || 'Interface', 'node-title', 'middle'));
         }
-        y = n.stereotype ? 14 + NAMEH - 6 : NAMEH - 2;
-        g.append(text(n.w / 2, y, n.name || 'Class', 'node-name', 'middle'));
-        g.append(el('line', { class: 'compartment-sep', x1: 0, y1: n._headH, x2: n.w, y2: n._headH }));
-        let ay = n._headH + 14;
-        for (const a of (n.attributes || [])) { g.append(text(PADX, ay, a, 'node-member', 'start')); ay += LINE; }
-        g.append(el('line', { class: 'compartment-sep', x1: 0, y1: n._headH + n._attrH, x2: n.w, y2: n._headH + n._attrH }));
-        let my = n._headH + n._attrH + 14;
-        for (const m of (n.methods || [])) { g.append(text(PADX, my, m, 'node-member', 'start')); my += LINE; }
         return g;
     }
 
@@ -632,12 +732,12 @@
         const edgeEl = e.target.closest('[data-edge]');
         const pt = toDiagram(e.clientX, e.clientY);
 
-        if (mode === 'class' && !nodeEl) { createClass(pt.x, pt.y); return; }
+        if (mode.startsWith('add:') && !nodeEl) { createNode(mode.slice(4), pt.x, pt.y); return; }
 
-        if (mode !== 'select' && mode !== 'class') {
+        if (mode.startsWith('rel:')) {
             // relationship: must start on a node
             if (nodeEl) {
-                drag = { kind: 'edge', from: nodeEl.dataset.node, temp: el('line', { class: 'temp-line' }) };
+                drag = { kind: 'edge', from: nodeEl.dataset.node, rel: mode.slice(4), temp: el('line', { class: 'temp-line' }) };
                 const c = center(nodeById(drag.from));
                 drag.temp.setAttribute('x1', c.x); drag.temp.setAttribute('y1', c.y);
                 drag.temp.setAttribute('x2', pt.x); drag.temp.setAttribute('y2', pt.y);
@@ -711,7 +811,7 @@
             const tEl = document.elementFromPoint(e.clientX, e.clientY);
             const targetNode = tEl && tEl.closest && tEl.closest('[data-node]');
             if (targetNode && targetNode.dataset.node !== drag.from) {
-                createEdge(drag.from, targetNode.dataset.node, mode);
+                createEdge(drag.from, targetNode.dataset.node, drag.rel);
             }
         } else if (drag.kind === 'node' && drag.moved) {
             commit(); save();
@@ -732,7 +832,8 @@
     canvas.addEventListener('dblclick', e => {
         if (e.target.closest('[data-node]')) return;
         const pt = toDiagram(e.clientX, e.clientY);
-        createClass(pt.x, pt.y);
+        const def = DIAGRAMS[diagramType()].nodes[0];
+        createNode(def.kind, pt.x, pt.y);
     });
 
     /* ============================================================
@@ -741,24 +842,45 @@
     function nodeById(id) { return state.nodes.find(n => n.id === id); }
     function edgeById(id) { return state.edges.find(e => e.id === id); }
 
-    function createClass(x, y) {
+    function nodeDefaults(kind) {
+        switch (kind) {
+            case 'class': return { name: 'NewClass', stereotype: '', attributes: ['- field: Type'], methods: ['+ method(): void'] };
+            case 'state': return { name: 'State' };
+            case 'initial': return { name: '' };
+            case 'final': return { name: '' };
+            case 'actor': return { name: 'Actor' };
+            case 'usecase': return { name: 'UseCase' };
+            case 'boundary': return { name: 'System', w: 280, h: 200 };
+            case 'component': return { name: 'Component' };
+            case 'interface': return { name: 'Interface' };
+        }
+        return { name: '' };
+    }
+
+    function createNode(kind, x, y) {
         commit();
-        const n = { id: uid('n'), x: Math.round(x - 65), y: Math.round(y - 30), name: 'NewClass', stereotype: '', attributes: ['- field: Type'], methods: ['+ method(): void'] };
+        layoutNodeKindTmp.kind = kind; layoutNode(layoutNodeKindTmp);   // 既定サイズ取得
+        const w = layoutNodeKindTmp.w, h = layoutNodeKindTmp.h;
+        const n = Object.assign({ id: uid('n'), kind, x: Math.round(x - w / 2), y: Math.round(y - h / 2) }, nodeDefaults(kind));
+        if (kind === 'boundary') { n.x = Math.round(x - n.w / 2); n.y = Math.round(y - n.h / 2); }
         state.nodes.push(n);
+        // 境界は他ノードの背面へ（先頭に挿入）
+        if (kind === 'boundary') { state.nodes.pop(); state.nodes.unshift(n); }
         setMode('select');
         select('node', n.id);
         render(); save();
         const f = $('f_name'); if (f) { f.focus(); f.select(); }
     }
+    const layoutNodeKindTmp = { name: '', attributes: [], methods: [] };
 
     function createEdge(from, to, type) {
         commit();
-        const e = { id: uid('e'), from, to, type, fromMult: '', toMult: '', label: '' };
+        const e = { id: uid('e'), from, to, type, fromMult: '', toMult: '', label: DEFAULT_EDGE_LABEL[type] || '' };
         state.edges.push(e);
         setMode('select');
         select('edge', e.id);
         render(); save();
-        toast(REL[type].label + 'を追加しました');
+        toast((REL[type] ? REL[type].label : '関連') + 'を追加しました');
     }
 
     function deleteSelection() {
@@ -855,34 +977,41 @@
         toast(ns.length + '件を貼り付けました');
     }
 
-    // 継承の親→子を上から下へ並べる簡易レイヤ自動レイアウト
+    // 有向関係でレイヤ化する簡易自動レイアウト（階層が無ければグリッド）
     function autoLayout() {
         if (!state.nodes.length) return;
         commit();
+        state.nodes.forEach(layoutNode);
         const level = new Map(state.nodes.map(n => [n.id, 0]));
-        // 継承/実現: from=子, to=親 → 子のレベル = 親+1
-        for (let iter = 0; iter < state.nodes.length; iter++) {
+        // 継承/実現は親(to)が上、その他は from が上
+        const order = state.edges.map(e => (e.type === 'inheritance' || e.type === 'realization')
+            ? { a: e.to, b: e.from } : { a: e.from, b: e.to }).filter(o => o.a !== o.b && level.has(o.a) && level.has(o.b));
+        for (let it = 0; it <= state.nodes.length; it++) {
             let changed = false;
-            for (const e of state.edges) {
-                if (e.type === 'inheritance' || e.type === 'realization') {
-                    const want = level.get(e.to) + 1;
-                    if (want > level.get(e.from)) { level.set(e.from, want); changed = true; }
-                }
-            }
+            for (const o of order) { const w = level.get(o.a) + 1; if (w > level.get(o.b)) { level.set(o.b, w); changed = true; } }
             if (!changed) break;
         }
         const rows = {};
         state.nodes.forEach(n => { (rows[level.get(n.id)] ||= []).push(n); });
-        const HGAP = 60, VGAP = 90; let y = 40;
-        Object.keys(rows).map(Number).sort((a, b) => a - b).forEach(lv => {
-            const row = rows[lv];
-            row.forEach(layoutNode);
-            const totW = row.reduce((s, n) => s + n.w, 0) + HGAP * (row.length - 1);
-            let x = Math.max(40, (1000 - totW) / 2);
-            let maxH = 0;
-            row.forEach(n => { n.x = Math.round(x); n.y = Math.round(y); x += n.w + HGAP; maxH = Math.max(maxH, n.h); });
-            y += maxH + VGAP;
-        });
+        const levels = Object.keys(rows).map(Number).sort((a, b) => a - b);
+        if (levels.length <= 1) {                         // グリッド
+            const cols = Math.ceil(Math.sqrt(state.nodes.length));
+            const HGAP = 50, VGAP = 50; let col = 0, colX = 40, rowY = 40, maxH = 0;
+            state.nodes.forEach(n => {
+                n.x = Math.round(colX); n.y = Math.round(rowY);
+                colX += n.w + HGAP; maxH = Math.max(maxH, n.h); col++;
+                if (col >= cols) { col = 0; colX = 40; rowY += maxH + VGAP; maxH = 0; }
+            });
+        } else {                                          // レイヤ
+            const HGAP = 60, VGAP = 90; let y = 40;
+            levels.forEach(lv => {
+                const row = rows[lv];
+                const totW = row.reduce((s, n) => s + n.w, 0) + HGAP * (row.length - 1);
+                let x = Math.max(40, (900 - totW) / 2), maxH = 0;
+                row.forEach(n => { n.x = Math.round(x); n.y = Math.round(y); x += n.w + HGAP; maxH = Math.max(maxH, n.h); });
+                y += maxH + VGAP;
+            });
+        }
         render(); save(); fitView();
         toast('自動整列しました');
     }
@@ -954,8 +1083,8 @@
         }
         if (!selection) {
             props.innerHTML = `<h3>使い方</h3><div class="empty-hint">
-                ・左の<b>ツール</b>でモードを選択<br>
-                ・<b>クラス追加</b>でキャンバスをクリック（または空白をダブルクリック）<br>
+                ・上の<b>図の種類</b>でクラス/状態/ユースケース/コンポーネントを切替<br>
+                ・左の<b>ツール</b>でノードを選んでキャンバスをクリック（空白ダブルクリックでも可）<br>
                 ・<b>関連線</b>はノードからノードへドラッグ<br>
                 ・<kbd>Shift</kbd>+クリック / ドラッグで<b>複数選択</b><br>
                 ・<kbd>Ctrl+D</kbd> 複製 / <kbd>Ctrl+C/V</kbd> コピペ<br>
@@ -965,20 +1094,42 @@
         }
         if (selection.kind === 'node') {
             const n = nodeById(selection.id); if (!n) { select(null); return; }
-            props.innerHTML = `<h3>クラス</h3>
-                <div class="field"><label>クラス名</label><input id="f_name" value="${esc(n.name)}"></div>
-                <div class="field"><label>ステレオタイプ（任意）</label><input id="f_stereo" value="${esc(n.stereotype || '')}" placeholder="interface, abstract …"></div>
-                <div class="field"><label>属性（1行に1つ）</label><textarea id="f_attrs" placeholder="- name: String">${esc((n.attributes || []).join('\n'))}</textarea></div>
-                <div class="field"><label>操作（1行に1つ）</label><textarea id="f_methods" placeholder="+ getName(): String">${esc((n.methods || []).join('\n'))}</textarea></div>
-                <button class="btn danger" id="f_del" style="width:100%"><span class="ico">🗑</span> このクラスを削除</button>`;
-            const upd = () => { n.name = $('f_name').value; n.stereotype = $('f_stereo').value.trim();
-                n.attributes = lines($('f_attrs').value); n.methods = lines($('f_methods').value); render(); };
-            $('f_name').oninput = $('f_stereo').oninput = $('f_attrs').oninput = $('f_methods').oninput = upd;
-            ['f_name','f_stereo','f_attrs','f_methods'].forEach(id => $(id).addEventListener('change', () => { recordEdit(); save(); }));
-            $('f_del').onclick = deleteSelection;
+            const kind = n.kind || 'class';
+            const delBtn = `<button class="btn danger" id="f_del" style="width:100%"><span class="ico">🗑</span> 削除</button>`;
+            if (kind === 'initial' || kind === 'final') {
+                props.innerHTML = `<h3>${NODE_LABEL[kind]}状態</h3><div class="empty-hint" style="margin-bottom:10px">${kind === 'initial' ? '開始疑似状態' : '終了状態'}（編集項目なし）</div>${delBtn}`;
+                $('f_del').onclick = deleteSelection;
+            } else if (kind === 'class') {
+                props.innerHTML = `<h3>クラス</h3>
+                    <div class="field"><label>クラス名</label><input id="f_name" value="${esc(n.name)}"></div>
+                    <div class="field"><label>ステレオタイプ（任意）</label><input id="f_stereo" value="${esc(n.stereotype || '')}" placeholder="interface, abstract …"></div>
+                    <div class="field"><label>属性（1行に1つ）</label><textarea id="f_attrs" placeholder="- name: String">${esc((n.attributes || []).join('\n'))}</textarea></div>
+                    <div class="field"><label>操作（1行に1つ）</label><textarea id="f_methods" placeholder="+ getName(): String">${esc((n.methods || []).join('\n'))}</textarea></div>${delBtn}`;
+                const upd = () => { n.name = $('f_name').value; n.stereotype = $('f_stereo').value.trim(); n.attributes = lines($('f_attrs').value); n.methods = lines($('f_methods').value); render(); };
+                $('f_name').oninput = $('f_stereo').oninput = $('f_attrs').oninput = $('f_methods').oninput = upd;
+                ['f_name', 'f_stereo', 'f_attrs', 'f_methods'].forEach(id => $(id).addEventListener('change', () => { recordEdit(); save(); }));
+                $('f_del').onclick = deleteSelection;
+            } else if (kind === 'boundary') {
+                props.innerHTML = `<h3>境界</h3>
+                    <div class="field"><label>名前</label><input id="f_name" value="${esc(n.name)}"></div>
+                    <div class="field"><label>幅</label><input id="f_w" type="number" value="${Math.round(n.w)}"></div>
+                    <div class="field"><label>高さ</label><input id="f_h" type="number" value="${Math.round(n.h)}"></div>${delBtn}`;
+                const upd = () => { n.name = $('f_name').value; n.w = Math.max(120, +$('f_w').value || 120); n.h = Math.max(80, +$('f_h').value || 80); render(); };
+                $('f_name').oninput = $('f_w').oninput = $('f_h').oninput = upd;
+                ['f_name', 'f_w', 'f_h'].forEach(id => $(id).addEventListener('change', () => { recordEdit(); save(); }));
+                $('f_del').onclick = deleteSelection;
+            } else {
+                props.innerHTML = `<h3>${NODE_LABEL[kind] || 'ノード'}</h3>
+                    <div class="field"><label>名前</label><input id="f_name" value="${esc(n.name)}"></div>${delBtn}`;
+                const upd = () => { n.name = $('f_name').value; render(); };
+                $('f_name').oninput = upd;
+                $('f_name').addEventListener('change', () => { recordEdit(); save(); });
+                $('f_del').onclick = deleteSelection;
+            }
         } else {
             const e = edgeById(selection.id); if (!e) { select(null); return; }
-            const opts = Object.entries(REL).map(([k, v]) => `<option value="${k}" ${k === e.type ? 'selected' : ''}>${v.label}</option>`).join('');
+            const allowed = new Set(DIAGRAMS[diagramType()].rels.concat([e.type]));
+            const opts = Object.entries(REL).filter(([k]) => allowed.has(k)).map(([k, v]) => `<option value="${k}" ${k === e.type ? 'selected' : ''}>${v.label}</option>`).join('');
             const a = nodeById(e.from), b = nodeById(e.to);
             props.innerHTML = `<h3>関連</h3>
                 <div class="field"><label>種類</label><select id="f_type">${opts}</select></div>
@@ -1003,25 +1154,51 @@
      * Tool palette
      * ============================================================ */
     const toolGrid = $('toolGrid');
-    TOOLS.forEach(t => {
-        const b = document.createElement('button');
-        b.className = 'tool'; b.dataset.tool = t;
-        b.innerHTML = `<span class="gly">${toolGlyph(t)}</span><span>${TOOL_LABEL[t] || REL[t].label}</span>`;
-        b.onclick = () => setMode(t);
-        toolGrid.append(b);
-    });
+    function toolLabel(t) {
+        if (t === 'select') return '選択';
+        if (t.startsWith('add:')) return NODE_LABEL[t.slice(4)] || t.slice(4);
+        return REL[t.slice(4)] ? REL[t.slice(4)].label : t;
+    }
+    function buildPalette() {
+        const def = DIAGRAMS[diagramType()];
+        const tools = ['select', ...def.nodes.map(n => 'add:' + n.kind), ...def.rels.map(r => 'rel:' + r)];
+        toolGrid.replaceChildren(...tools.map(t => {
+            const b = document.createElement('button');
+            b.className = 'tool'; b.dataset.tool = t;
+            b.innerHTML = `<span class="gly">${toolGlyph(t)}</span><span>${toolLabel(t)}</span>`;
+            b.onclick = () => setMode(t);
+            return b;
+        }));
+        setMode('select');
+    }
     function setMode(m) {
         mode = m;
         toolGrid.querySelectorAll('.tool').forEach(b => b.classList.toggle('active', b.dataset.tool === m));
         canvas.classList.remove('mode-select', 'mode-class', 'mode-rel');
-        canvas.classList.add(m === 'select' ? 'mode-select' : m === 'class' ? 'mode-class' : 'mode-rel');
-        $('modeLabel').textContent = TOOL_LABEL[m] || (REL[m] ? REL[m].label + '（接続）' : m);
+        canvas.classList.add(m === 'select' ? 'mode-select' : m.startsWith('add:') ? 'mode-class' : 'mode-rel');
+        $('modeLabel').textContent = toolLabel(m);
         setStatus(m === 'select' ? '' : 'ok', m === 'select' ? '選択モード' :
-            m === 'class' ? 'クリックでクラス配置' : REL[m].label + ': ノード間をドラッグ');
+            m.startsWith('add:') ? `クリックで${toolLabel(m)}を配置` : toolLabel(m) + ': ノード間をドラッグ');
     }
 
+    function switchType(t) {
+        if (!DIAGRAMS[t] || t === project.type) { $('diagramType').value = project.type; return; }
+        project.diagrams[project.type] = state;
+        project.type = t;
+        state = project.diagrams[t] || (project.diagrams[t] = emptyDiagram());
+        selection = null; selNodes = new Set();
+        history = []; future = [];
+        buildPalette();
+        buildTemplateOptions();
+        $('textBtn').disabled = (t !== 'class');
+        if (t !== 'class' && drawerOpen) toggleDrawer(false);
+        render(); renderPanel(); fitView(); save();
+        $('diagramType').value = t;
+    }
+    $('diagramType').onchange = () => switchType($('diagramType').value);
+
     /* ============================================================
-     * テキスト⇄図 双方向同期（PlantUML風DSL）
+     * テキスト⇄図 双方向同期（PlantUML風DSL）※クラス図のみ
      * ============================================================ */
     const dsl = $('dsl'), textDrawer = $('textDrawer');
     let drawerOpen = false;
@@ -1158,7 +1335,7 @@
         s.textContent = msg || (ok ? 'OK' : 'エラー');
     }
     function syncTextFromDiagram() {
-        if (!drawerOpen || document.activeElement === dsl) return;
+        if (!drawerOpen || diagramType() !== 'class' || document.activeElement === dsl) return;
         dsl.value = toDSL();
         setDslStatus(true, 'OK');
     }
@@ -1182,7 +1359,7 @@
         if (drawerOpen) { dsl.value = toDSL(); setDslStatus(true, 'OK'); }
         applyView();
     }
-    $('textBtn').onclick = () => toggleDrawer();
+    $('textBtn').onclick = () => { if (diagramType() !== 'class') return toast('テキスト同期はクラス図のみ対応です', true); toggleDrawer(); };
     $('textCloseBtn').onclick = () => toggleDrawer(false);
     $('dslCopyBtn').onclick = async () => {
         try { await navigator.clipboard.writeText(dsl.value); toast('テキストをコピーしました'); }
@@ -1209,7 +1386,17 @@
         .marker-open{fill:none;stroke:${LN};stroke-width:1.4}
         .edge-label{fill:${TX};font:12px ${FONT}}
         .edge-label-bg{fill:${CB};opacity:.85}
-        .edge-hit,.temp-line{display:none}`;
+        .shape{fill:${NF};stroke:${NS};stroke-width:1.2}
+        .pseudo-fill{fill:${NS}}
+        .pseudo-ring{fill:${NF};stroke:${NS};stroke-width:1.4}
+        .actor-stroke{fill:none;stroke:${NS};stroke-width:1.6}
+        .actor-head{fill:${NF};stroke:${NS};stroke-width:1.6}
+        .node-title{fill:${TX};font:600 13px ${FONT}}
+        .node-sub{fill:${MU};font:italic 11px ${FONT}}
+        .boundary-rect{fill:none;stroke:${NS};stroke-width:1.4;stroke-dasharray:7 5}
+        .boundary-title{fill:${MU};font:600 12px ${FONT}}
+        .comp-icon{fill:${NH};stroke:${NS};stroke-width:1.2}
+        .edge-hit,.temp-line,.marquee{display:none}`;
     }
     function buildSVG() {
         state.nodes.forEach(layoutNode);
@@ -1273,7 +1460,7 @@ ${inner}
      * ============================================================ */
     $('exportJsonBtn').onclick = () => {
         if (!state.nodes.length) return toast('保存する図がありません', true);
-        download(new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' }), tsName('json'));
+        download(new Blob([JSON.stringify(Object.assign({ type: project.type }, state), null, 2)], { type: 'application/json' }), tsName('json'));
         toast('JSONを保存しました');
     };
     $('importBtn').onclick = () => $('fileInput').click();
@@ -1285,7 +1472,7 @@ ${inner}
     };
     $('shareBtn').onclick = async () => {
         if (!state.nodes.length) return toast('共有する図がありません', true);
-        const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(state))));
+        const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(Object.assign({ type: project.type }, state)))));
         const url = location.origin + location.pathname + '#d=' + b64;
         try { await navigator.clipboard.writeText(url); toast('共有リンクをコピーしました'); }
         catch (_) { history.replaceState(null, '', '#d=' + b64); toast('URLを更新しました'); }
@@ -1293,62 +1480,91 @@ ${inner}
 
     function loadState(obj) {
         if (!obj || !Array.isArray(obj.nodes)) throw new Error('bad');
-        commit();
-        state = { nodes: obj.nodes, edges: Array.isArray(obj.edges) ? obj.edges : [] };
-        // id重複回避用にseqを更新
+        const t = (obj.type && DIAGRAMS[obj.type]) ? obj.type : project.type;
+        if (t !== project.type) {
+            project.diagrams[project.type] = state;
+            project.type = t; history = []; future = [];
+            buildPalette(); buildTemplateOptions();
+            $('textBtn').disabled = (t !== 'class');
+            if (t !== 'class' && drawerOpen) toggleDrawer(false);
+            $('diagramType').value = t;
+        } else { commit(); }
+        const nd = { nodes: obj.nodes, edges: Array.isArray(obj.edges) ? obj.edges : [] };
+        project.diagrams[t] = nd; state = nd;
         let mx = 0;
         state.nodes.concat(state.edges).forEach(o => { const m = /(\d+)$/.exec(o.id || ''); if (m) mx = Math.max(mx, +m[1]); });
-        seq = mx + 1;
-        selection = null; render(); renderPanel(); fitView(); save();
+        seq = Math.max(seq, mx + 1);
+        selection = null; selNodes = new Set(); render(); renderPanel(); fitView(); save();
     }
 
     /* ============================================================
-     * Templates
+     * Templates（図種ごと）
      * ============================================================ */
+    function N(id, kind, x, y, name, extra) { return Object.assign({ id, kind, x, y, name: name || '' }, extra || {}); }
+    function E(id, from, to, type, label, extra) { return Object.assign({ id, from, to, type, fromMult: '', toMult: '', label: label || '' }, extra || {}); }
+    const CLS = (id, x, y, name, stereotype, attributes, methods) => N(id, 'class', x, y, name, { stereotype: stereotype || '', attributes: attributes || [], methods: methods || [] });
+
     const TEMPLATES = {
-        inherit: ['継承の例', () => {
-            const a = mkNode('n1', 80, 60, 'Animal', 'abstract', ['# name: String', '# age: int'], ['+ eat(): void', '+ sleep(): void']);
-            const d = mkNode('n2', 30, 280, 'Dog', '', ['+ breed: String'], ['+ bark(): void']);
-            const c = mkNode('n3', 250, 280, 'Cat', '', ['+ color: String'], ['+ meow(): void']);
-            return { nodes: [a, d, c], edges: [
-                mkEdge('e1', 'n2', 'n1', 'inheritance'),
-                mkEdge('e2', 'n3', 'n1', 'inheritance')
-            ] };
-        }],
-        interface: ['インタフェース実現', () => {
-            const i = mkNode('n1', 120, 60, 'Repository', 'interface', [], ['+ save(e: Entity): void', '+ findById(id): Entity']);
-            const u = mkNode('n2', 100, 300, 'UserRepository', '', ['- db: Database'], ['+ save(e: Entity): void', '+ findById(id): Entity']);
-            return { nodes: [i, u], edges: [mkEdge('e1', 'n2', 'n1', 'realization')] };
-        }],
-        composition: ['集約・合成', () => {
-            const car = mkNode('n1', 60, 60, 'Car', '', ['- vin: String'], ['+ start(): void']);
-            const eng = mkNode('n2', 60, 280, 'Engine', '', ['- power: int'], []);
-            const wh = mkNode('n3', 300, 280, 'Wheel', '', ['- size: int'], []);
-            return { nodes: [car, eng, wh], edges: [
-                Object.assign(mkEdge('e1', 'n1', 'n2', 'composition'), { toMult: '1' }),
-                Object.assign(mkEdge('e2', 'n1', 'n3', 'aggregation'), { toMult: '4' })
-            ] };
-        }],
-        mvc: ['MVC', () => {
-            const m = mkNode('n1', 60, 60, 'Model', '', ['- data: Object'], ['+ getData(): Object', '+ setData(d): void']);
-            const v = mkNode('n2', 320, 60, 'View', '', [], ['+ render(): void']);
-            const c = mkNode('n3', 190, 280, 'Controller', '', ['- model: Model', '- view: View'], ['+ handle(req): void']);
-            return { nodes: [m, v, c], edges: [
-                Object.assign(mkEdge('e1', 'n3', 'n1', 'directed'), { label: 'updates' }),
-                Object.assign(mkEdge('e2', 'n3', 'n2', 'directed'), { label: 'selects' }),
-                Object.assign(mkEdge('e3', 'n2', 'n1', 'dependency'), { label: 'observes' })
-            ] };
-        }]
+        c_inherit: { type: 'class', label: '継承の例', make: () => ({ nodes: [
+            CLS('n1', 80, 60, 'Animal', 'abstract', ['# name: String', '# age: int'], ['+ eat(): void', '+ sleep(): void']),
+            CLS('n2', 30, 280, 'Dog', '', ['+ breed: String'], ['+ bark(): void']),
+            CLS('n3', 250, 280, 'Cat', '', ['+ color: String'], ['+ meow(): void'])
+        ], edges: [E('e1', 'n2', 'n1', 'inheritance'), E('e2', 'n3', 'n1', 'inheritance')] }) },
+        c_interface: { type: 'class', label: 'インタフェース実現', make: () => ({ nodes: [
+            CLS('n1', 120, 60, 'Repository', 'interface', [], ['+ save(e): void', '+ findById(id): Entity']),
+            CLS('n2', 100, 300, 'UserRepository', '', ['- db: Database'], ['+ save(e): void', '+ findById(id): Entity'])
+        ], edges: [E('e1', 'n2', 'n1', 'realization')] }) },
+        c_comp: { type: 'class', label: '集約・合成', make: () => ({ nodes: [
+            CLS('n1', 60, 60, 'Car', '', ['- vin: String'], ['+ start(): void']),
+            CLS('n2', 60, 280, 'Engine', '', ['- power: int'], []),
+            CLS('n3', 300, 280, 'Wheel', '', ['- size: int'], [])
+        ], edges: [E('e1', 'n1', 'n2', 'composition', '', { toMult: '1' }), E('e2', 'n1', 'n3', 'aggregation', '', { toMult: '4' })] }) },
+        c_mvc: { type: 'class', label: 'MVC', make: () => ({ nodes: [
+            CLS('n1', 60, 60, 'Model', '', ['- data: Object'], ['+ getData(): Object']),
+            CLS('n2', 320, 60, 'View', '', [], ['+ render(): void']),
+            CLS('n3', 190, 280, 'Controller', '', ['- model', '- view'], ['+ handle(req): void'])
+        ], edges: [E('e1', 'n3', 'n1', 'directed', 'updates'), E('e2', 'n3', 'n2', 'directed', 'selects'), E('e3', 'n2', 'n1', 'dependency', 'observes')] }) },
+
+        s_order: { type: 'state', label: '注文ライフサイクル', make: () => ({ nodes: [
+            N('n1', 'initial', 70, 30), N('n2', 'state', 40, 100, '受付'), N('n3', 'state', 40, 195, '支払済'),
+            N('n4', 'state', 40, 290, '発送済'), N('n5', 'final', 78, 385)
+        ], edges: [E('e1', 'n1', 'n2', 'transition'), E('e2', 'n2', 'n3', 'transition', '入金'),
+            E('e3', 'n3', 'n4', 'transition', '出荷'), E('e4', 'n4', 'n5', 'transition', '受領'),
+            E('e5', 'n2', 'n5', 'transition', 'キャンセル')] }) },
+        s_signal: { type: 'state', label: '信号機', make: () => ({ nodes: [
+            N('n1', 'initial', 150, 20), N('n2', 'state', 120, 90, '赤'), N('n3', 'state', 120, 190, '青'), N('n4', 'state', 120, 290, '黄')
+        ], edges: [E('e1', 'n1', 'n2', 'transition'), E('e2', 'n2', 'n3', 'transition', '30秒'),
+            E('e3', 'n3', 'n4', 'transition', '25秒'), E('e4', 'n4', 'n2', 'transition', '5秒')] }) },
+
+        u_ec: { type: 'usecase', label: 'ECサイト', make: () => ({ nodes: [
+            N('n0', 'boundary', 170, 20, 'ECサイト', { w: 280, h: 340 }),
+            N('n1', 'actor', 60, 130, '顧客'), N('n6', 'actor', 500, 150, '管理者'),
+            N('n2', 'usecase', 210, 50, '商品検索'), N('n3', 'usecase', 210, 130, 'カート追加'),
+            N('n4', 'usecase', 210, 210, '注文する'), N('n5', 'usecase', 210, 290, 'ログイン'),
+            N('n7', 'usecase', 360, 290, '在庫管理')
+        ], edges: [E('e1', 'n1', 'n2', 'association'), E('e2', 'n1', 'n3', 'association'),
+            E('e3', 'n1', 'n4', 'association'), E('e4', 'n4', 'n5', 'include', '«include»'),
+            E('e5', 'n6', 'n7', 'association')] }) },
+
+        comp_web: { type: 'component', label: 'Webアプリ', make: () => ({ nodes: [
+            N('n1', 'component', 60, 80, 'Web UI'), N('n2', 'component', 320, 80, 'API サーバー'),
+            N('n3', 'component', 320, 220, '認証サービス'), N('n4', 'component', 580, 80, 'DB')
+        ], edges: [E('e1', 'n1', 'n2', 'dependency', 'HTTP'), E('e2', 'n2', 'n3', 'dependency'),
+            E('e3', 'n2', 'n4', 'dependency', 'SQL')] }) }
     };
-    function mkNode(id, x, y, name, stereotype, attributes, methods) { return { id, x, y, name, stereotype, attributes, methods }; }
-    function mkEdge(id, from, to, type) { return { id, from, to, type, fromMult: '', toMult: '', label: '' }; }
 
     const tsel = $('templateSelect');
-    Object.entries(TEMPLATES).forEach(([k, [label]]) => { const o = document.createElement('option'); o.value = k; o.textContent = label; tsel.append(o); });
+    function buildTemplateOptions() {
+        tsel.replaceChildren();
+        const o0 = document.createElement('option'); o0.value = ''; o0.textContent = 'テンプレート…'; tsel.append(o0);
+        for (const [k, t] of Object.entries(TEMPLATES)) if (t.type === project.type) {
+            const o = document.createElement('option'); o.value = k; o.textContent = t.label; tsel.append(o);
+        }
+    }
     tsel.onchange = () => {
-        const k = tsel.value; if (!k) return;
+        const k = tsel.value; if (!k) { return; }
         if (state.nodes.length && !confirm('現在の図をテンプレートで置き換えますか？')) { tsel.value = ''; return; }
-        loadState(TEMPLATES[k][1]());
+        loadState(Object.assign({ type: project.type }, TEMPLATES[k].make()));
         tsel.value = '';
     };
 
@@ -1364,7 +1580,7 @@ ${inner}
     function setStatus(s, t) { const p = $('statusPill'); p.classList.toggle('ok', s === 'ok'); $('statusText').textContent = t; }
     let saveTimer;
     function save() {
-        try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch (_) {}
+        try { project.diagrams[project.type] = state; localStorage.setItem(LS_KEY, JSON.stringify(project)); } catch (_) {}
         const b = $('savedBadge'); b.classList.add('show'); clearTimeout(saveTimer); saveTimer = setTimeout(() => b.classList.remove('show'), 1200);
         $('undoBtn').disabled = !history.length; $('redoBtn').disabled = !future.length;
     }
@@ -1376,15 +1592,18 @@ ${inner}
 
     /* ---- help ---- */
     $('helpBtn').onclick = () => alert([
-        'UMLクラス図エディタ — 使い方',
+        'UML図エディタ — 使い方',
+        '',
+        '【図の種類】',
+        '  ・上部のセレクタでクラス図/状態遷移図/ユースケース図/',
+        '    コンポーネント図を切替（各図は個別に保存されます）',
         '',
         '【操作】',
-        '  ・ツール「クラス追加」→ キャンバスをクリックでクラスを配置',
-        '  ・空白をダブルクリックでもクラスを追加',
-        '  ・関連線ツール（関連/誘導/継承/実現/依存/集約/合成）を選び、',
-        '    ノードからノードへドラッグして接続',
-        '  ・選択ツールでクラスをドラッグして移動',
-        '  ・右下のプロパティで名前・属性・操作・多重度を編集',
+        '  ・左のツールでノードを選び、キャンバスをクリックで配置',
+        '  ・空白をダブルクリックでもノードを追加',
+        '  ・関連線ツールを選び、ノードからノードへドラッグして接続',
+        '  ・選択ツールでノードをドラッグして移動',
+        '  ・右パネルで名前・属性・操作・多重度・ラベルを編集',
         '',
         '【複数選択・整列】',
         '  ・Shift+クリック で複数選択 / Shift+ドラッグ で範囲選択',
@@ -1400,7 +1619,7 @@ ${inner}
         '  Delete / Backspace … 選択を削除',
         '  Ctrl/Cmd + Z … 元に戻す / Shift+Z でやり直し',
         '  Ctrl/Cmd + D … 複製 / C コピー / V 貼り付け',
-        '  Shift + F … 全体表示 / C クラス追加 / V 選択 / ESC 選択へ',
+        '  Shift + F … 全体表示 / C ノード追加 / V 選択 / ESC 選択へ',
         '  ホイール … 拡大縮小 / 空白ドラッグ … 画面移動',
         '',
         '【特長】',
@@ -1426,7 +1645,7 @@ ${inner}
         if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); selNodes = new Set(state.nodes.map(n => n.id)); selection = state.nodes.length ? { kind: 'node', id: state.nodes[state.nodes.length - 1].id } : null; refreshSelectionStyles(); renderPanel(); return; }
         if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelection(); }
         else if (e.key === 'Escape') { setMode('select'); select(null); }
-        else if (e.key === 'c' || e.key === 'C') setMode('class');
+        else if (e.key === 'c' || e.key === 'C') setMode('add:' + DIAGRAMS[diagramType()].nodes[0].kind);
         else if (e.key === 'v' || e.key === 'V') setMode('select');
         else if ((e.key === 'f' || e.key === 'F') && e.shiftKey) { e.preventDefault(); fitView(); }
     });
@@ -1448,22 +1667,38 @@ ${inner}
     /* ============================================================
      * Init
      * ============================================================ */
+    function recomputeSeq() {
+        let mx = 0;
+        for (const t in project.diagrams) project.diagrams[t].nodes.concat(project.diagrams[t].edges).forEach(o => { const m = /(\d+)$/.exec(o.id || ''); if (m) mx = Math.max(mx, +m[1]); });
+        seq = mx + 1;
+    }
+
     (function init() {
-        let loaded = null;
+        let shared = null, stored = null;
         const m = location.hash.match(/#d=(.+)/);
-        if (m) { try { loaded = JSON.parse(decodeURIComponent(escape(atob(m[1])))); } catch (_) {} }
-        if (!loaded) { try { const s = localStorage.getItem(LS_KEY); if (s) loaded = JSON.parse(s); } catch (_) {} }
-        if (loaded && Array.isArray(loaded.nodes) && loaded.nodes.length) {
-            state = { nodes: loaded.nodes, edges: Array.isArray(loaded.edges) ? loaded.edges : [] };
-            let mx = 0; state.nodes.concat(state.edges).forEach(o => { const mm = /(\d+)$/.exec(o.id || ''); if (mm) mx = Math.max(mx, +mm[1]); }); seq = mx + 1;
+        if (m) { try { shared = JSON.parse(decodeURIComponent(escape(atob(m[1])))); } catch (_) {} }
+        try { const s = localStorage.getItem(LS_KEY); if (s) stored = JSON.parse(s); } catch (_) {}
+
+        if (stored && stored.diagrams && stored.type) {                 // 新形式（プロジェクト）
+            project = { type: DIAGRAMS[stored.type] ? stored.type : 'class', diagrams: {} };
+            for (const t in DIAGRAMS) project.diagrams[t] = (stored.diagrams[t] && Array.isArray(stored.diagrams[t].nodes)) ? stored.diagrams[t] : emptyDiagram();
+        } else if (stored && Array.isArray(stored.nodes)) {             // 旧形式（単一クラス図）→移行
+            project.diagrams.class = { nodes: stored.nodes, edges: Array.isArray(stored.edges) ? stored.edges : [] };
         } else {
-            state = TEMPLATES.inherit[1]();
-            seq = 10;
+            project.diagrams.class = TEMPLATES.c_inherit.make();
         }
-        setMode('select');
-        render(); renderPanel();
-        fitView();
+        state = project.diagrams[project.type];
+        recomputeSeq();
+
+        $('diagramType').value = project.type;
+        $('textBtn').disabled = (project.type !== 'class');
+        buildPalette();
+        buildTemplateOptions();
+        render(); renderPanel(); fitView();
         setStatus('', '準備完了');
+
+        // 共有リンクがあれば取り込み（該当図種へ）
+        if (shared && Array.isArray(shared.nodes) && shared.nodes.length) loadState(shared);
     })();
     </script>
 </body>
