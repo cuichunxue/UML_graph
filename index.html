@@ -250,6 +250,12 @@
         .seq-msg.selected .seq-line { stroke: var(--sel); stroke-width: 2.4; }
         .seq-msg.selected .seq-arrow-filled { fill: var(--sel); stroke: var(--sel); }
         .seq-msg.selected .seq-arrow-open { stroke: var(--sel); }
+        .seq-activation { fill: var(--node-fill); stroke: var(--node-stroke); stroke-width: 1; }
+        .frag-rect { fill: none; stroke: var(--node-stroke); stroke-width: 1.2; }
+        .frag-tab { fill: var(--node-head); stroke: var(--node-stroke); stroke-width: 1.2; cursor: pointer; }
+        .frag-tab-text { fill: var(--muted); font: 600 11px -apple-system,'Segoe UI','Noto Sans JP',sans-serif; }
+        .frag-else { stroke: var(--node-stroke); stroke-width: 1; stroke-dasharray: 6 4; }
+        .seq-frag.selected .frag-rect, .seq-frag.selected .frag-tab { stroke: var(--sel); stroke-width: 2; }
 
         .canvas-empty {
             position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -470,7 +476,7 @@
     /* ============================================================
      * State / Project（図種ごとに独立したダイアグラムを保持）
      * ============================================================ */
-    function emptyDiagramFor(t) { return t === 'sequence' ? { participants: [], messages: [] } : { nodes: [], edges: [] }; }
+    function emptyDiagramFor(t) { return t === 'sequence' ? { participants: [], messages: [], fragments: [] } : { nodes: [], edges: [] }; }
     let project = { type: 'class', diagrams: {} };
     for (const t in { class: 1, state: 1, usecase: 1, component: 1, sequence: 1 }) project.diagrams[t] = emptyDiagramFor(t);
     let state = project.diagrams.class;   // アクティブなダイアグラム
@@ -743,6 +749,44 @@
         return el('path', { class: 'seq-arrow-open', d: `M${x - dir * L},${y - W} L${x},${y} L${x - dir * L},${y + W}` });
     }
 
+    // 同期呼び出し→応答 の対応から実行仕様バーを自動算出
+    function computeActivations(L) {
+        const acts = [], stacks = {};
+        L.msgs.forEach((m, i) => {
+            const y = L.firstMsgY + i * SEQ.rowGap;
+            if (m.type === 'sync') { (stacks[m.to] || (stacks[m.to] = [])).push({ y1: y, depth: (stacks[m.to].length) }); }
+            else if (m.type === 'reply') { const st = stacks[m.from]; if (st && st.length) { const a = st.pop(); acts.push({ part: m.from, y1: a.y1, y2: y, depth: a.depth }); } }
+        });
+        for (const part in stacks) for (const a of stacks[part]) acts.push({ part, y1: a.y1, y2: L.bottomY - 8, depth: a.depth });
+        return acts;
+    }
+
+    function fragGeom(L, f) {
+        const idx = id => L.msgs.findIndex(m => m.id === id);
+        let i1 = idx(f.from), i2 = idx(f.to);
+        if (i1 < 0 || i2 < 0) return null;
+        if (i1 > i2) { const t = i1; i1 = i2; i2 = t; }
+        let minX = Infinity, maxX = -Infinity, hasSelf = false;
+        for (let i = i1; i <= i2; i++) {
+            const m = L.msgs[i], xa = L.cx.get(m.from), xb = L.cx.get(m.to);
+            if (xa == null || xb == null) continue;
+            minX = Math.min(minX, xa, xb); maxX = Math.max(maxX, xa, xb);
+            if (m.from === m.to) hasSelf = true;
+        }
+        if (!isFinite(minX)) return null;
+        minX -= 34; maxX += 34 + (hasSelf ? SEQ.selfW : 0);
+        return { x: minX, y: L.firstMsgY + i1 * SEQ.rowGap - SEQ.rowGap * 0.7, w: maxX - minX, h: (i2 - i1) * SEQ.rowGap + SEQ.rowGap * 1.15 };
+    }
+
+    function addFragment() {
+        const msgs = state.messages || [];
+        if (!msgs.length) return toast('先にメッセージを追加してください', true);
+        commit();
+        (state.fragments || (state.fragments = [])).push({ id: uid('f'), type: 'opt', label: '', from: msgs[0].id, to: msgs[msgs.length - 1].id, elseAfter: '', elseLabel: '' });
+        select('frag', state.fragments[state.fragments.length - 1].id);
+        render(); save();
+    }
+
     function seqActorHead(g, x, top, name) {
         const cyh = top + 7;
         g.append(el('circle', { class: 'actor-head', cx: x, cy: cyh, r: 6 }));
@@ -770,6 +814,31 @@
             }
             g.append(el('rect', { class: 'seq-hit', x: x - w / 2, y: SEQ.headTop, width: w, height: SEQ.headH }));
             frag.append(g);
+        }
+        // 複合フラグメント（メッセージの背面に枠）
+        for (const f of (state.fragments || [])) {
+            const g = fragGeom(L, f); if (!g) continue;
+            const grp = el('g', { class: 'seq-frag' + (isSel('frag', f.id) ? ' selected' : '') });
+            grp.dataset.frag = f.id;
+            grp.append(el('rect', { class: 'frag-rect', x: g.x, y: g.y, width: g.w, height: g.h, rx: 2 }));
+            const head = f.type + (f.label ? ` [${f.label}]` : '');
+            const tw = Math.max(38, Math.ceil(measure(head, "600 11px " + FONT)) + 16), th = 17;
+            grp.append(el('path', { class: 'frag-tab', d: `M${g.x},${g.y} h${tw} v${th - 5} l-5,5 h${-(tw - 5)} Z` }));
+            grp.append(text(g.x + 7, g.y + 12, head, 'frag-tab-text', 'start'));
+            if (f.type === 'alt' && f.elseAfter) {
+                const ei = L.msgs.findIndex(m => m.id === f.elseAfter);
+                if (ei >= 0) {
+                    const ey = L.firstMsgY + ei * SEQ.rowGap + SEQ.rowGap * 0.5;
+                    grp.append(el('line', { class: 'frag-else', x1: g.x, y1: ey, x2: g.x + g.w, y2: ey }));
+                    grp.append(text(g.x + 8, ey - 3, '[else]' + (f.elseLabel ? ' ' + f.elseLabel : ''), 'frag-tab-text', 'start'));
+                }
+            }
+            frag.append(grp);
+        }
+        // 実行仕様バー（activation）
+        for (const a of computeActivations(L)) {
+            const x = L.cx.get(a.part); if (x == null) continue;
+            frag.append(el('rect', { class: 'seq-activation', x: x - 5 + a.depth * 5, y: a.y1, width: 10, height: Math.max(6, a.y2 - a.y1) }));
         }
         // メッセージ（時間順に上から）
         L.msgs.forEach((m, i) => {
@@ -843,8 +912,10 @@
             }
             return;
         }
+        const fragEl = e.target.closest('[data-frag]');
         if (partEl) select('part', partEl.dataset.part);
         else if (msgEl) select('msg', msgEl.dataset.msg);
+        else if (fragEl) select('frag', fragEl.dataset.frag);
         else { select(null); drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, ox: view.tx, oy: view.ty }; canvas.setPointerCapture(e.pointerId); }
     }
     function seqPointerMove(e) {
@@ -1077,6 +1148,7 @@
             if (!selection) return;
             commit();
             if (selection.kind === 'part') { state.participants = state.participants.filter(p => p.id !== selection.id); state.messages = state.messages.filter(m => m.from !== selection.id && m.to !== selection.id); }
+            else if (selection.kind === 'frag') { state.fragments = (state.fragments || []).filter(f => f.id !== selection.id); }
             else state.messages = state.messages.filter(m => m.id !== selection.id);
             selection = null; render(); renderPanel(); save(); return;
         }
@@ -1349,16 +1421,23 @@
     function lines(s) { return s.split('\n').map(x => x.trimEnd()).filter(x => x.trim() !== ''); }
     function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
+    const FRAG_TYPES = ['opt', 'loop', 'alt', 'par', 'break', 'critical'];
     function renderSeqPanel() {
+        const delBtn = `<button class="btn danger" id="f_del" style="width:100%"><span class="ico">🗑</span> 削除</button>`;
+        const fragBtn = `<button class="btn" id="f_addfrag" style="width:100%;margin-top:10px"><span class="ico">▭</span> フラグメント追加 (alt/loop/opt)</button>`;
+        const pn = id => { const p = (state.participants || []).find(o => o.id === id); return p ? p.name : '?'; };
+        const msgOpts = (sel) => (state.messages || []).map((m, i) => `<option value="${m.id}" ${m.id === sel ? 'selected' : ''}>${i + 1}. ${esc(m.text || (pn(m.from) + '→' + pn(m.to)))}</option>`).join('');
+
         if (!selection) {
             props.innerHTML = `<h3>使い方</h3><div class="empty-hint">
                 ・<b>ライフライン/アクター</b>でキャンバスをクリックして追加<br>
-                ・<b>同期/非同期/応答</b>を選び、ライフラインから別のライフラインへドラッグでメッセージ追加<br>
+                ・<b>同期/非同期/応答</b>を選び、ライフライン間をドラッグでメッセージ追加<br>
                 ・メッセージは上から時間順。選択して▲▼で並べ替え<br>
-                ・同じライフラインへドラッグで自己メッセージ</div>`;
+                ・同じライフラインへドラッグで自己メッセージ<br>
+                ・同期呼び出し→応答 で<b>実行仕様バー</b>を自動表示</div>${fragBtn}`;
+            $('f_addfrag').onclick = addFragment;
             return;
         }
-        const delBtn = `<button class="btn danger" id="f_del" style="width:100%"><span class="ico">🗑</span> 削除</button>`;
         if (selection.kind === 'part') {
             const p = state.participants.find(o => o.id === selection.id); if (!p) { select(null); return; }
             props.innerHTML = `<h3>ライフライン</h3>
@@ -1374,9 +1453,28 @@
             $('f_left').onclick = () => moveItem(state.participants, p.id, -1);
             $('f_right').onclick = () => moveItem(state.participants, p.id, 1);
             $('f_del').onclick = deleteSelection;
+        } else if (selection.kind === 'frag') {
+            const f = (state.fragments || []).find(o => o.id === selection.id); if (!f) { select(null); return; }
+            const tOpts = FRAG_TYPES.map(k => `<option value="${k}" ${k === f.type ? 'selected' : ''}>${k}</option>`).join('');
+            const elseBlock = f.type === 'alt' ? `
+                <div class="field"><label>else 位置（このメッセージの後）</label><select id="f_else"><option value="">なし</option>${msgOpts(f.elseAfter)}</select></div>
+                <div class="field"><label>else 条件</label><input id="f_elsel" value="${esc(f.elseLabel || '')}" placeholder="それ以外"></div>` : '';
+            props.innerHTML = `<h3>複合フラグメント</h3>
+                <div class="field"><label>種類</label><select id="f_type">${tOpts}</select></div>
+                <div class="field"><label>条件 / ガード</label><input id="f_label" value="${esc(f.label || '')}" placeholder="x > 0, 成功時 …"></div>
+                <div class="field"><label>開始メッセージ</label><select id="f_from">${msgOpts(f.from)}</select></div>
+                <div class="field"><label>終了メッセージ</label><select id="f_to">${msgOpts(f.to)}</select></div>
+                ${elseBlock}${delBtn}`;
+            const upd = () => { f.type = $('f_type').value; f.label = $('f_label').value; f.from = $('f_from').value; f.to = $('f_to').value;
+                if ($('f_else')) f.elseAfter = $('f_else').value; if ($('f_elsel')) f.elseLabel = $('f_elsel').value; render(); };
+            $('f_type').onchange = () => { upd(); recordEdit(); renderPanel(); save(); };
+            $('f_from').onchange = $('f_to').onchange = () => { upd(); recordEdit(); save(); };
+            $('f_label').oninput = upd; $('f_label').addEventListener('change', () => { recordEdit(); save(); });
+            if ($('f_else')) $('f_else').onchange = () => { upd(); recordEdit(); save(); };
+            if ($('f_elsel')) { $('f_elsel').oninput = upd; $('f_elsel').addEventListener('change', () => { recordEdit(); save(); }); }
+            $('f_del').onclick = deleteSelection;
         } else {
             const m = state.messages.find(o => o.id === selection.id); if (!m) { select(null); return; }
-            const pn = id => { const p = state.participants.find(o => o.id === id); return p ? p.name : '?'; };
             const opts = ['sync', 'async', 'reply'].map(k => `<option value="${k}" ${k === m.type ? 'selected' : ''}>${REL[k].label}</option>`).join('');
             props.innerHTML = `<h3>メッセージ</h3>
                 <div class="field"><label>本文</label><input id="f_text" value="${esc(m.text || '')}" placeholder="メソッド名 / 内容"></div>
@@ -1384,7 +1482,7 @@
                 <div class="field"><label>向き</label><div class="empty-hint">${esc(pn(m.from))} → ${esc(pn(m.to))}</div></div>
                 <button class="btn" id="f_swap" style="width:100%;margin-bottom:8px"><span class="ico">⇄</span> 送受信を反転</button>
                 <div class="field"><label>並び替え（時間順）</label><div class="tool-grid">
-                    <button class="tool" id="f_up">▲ 上へ</button><button class="tool" id="f_down">▼ 下へ</button></div></div>${delBtn}`;
+                    <button class="tool" id="f_up">▲ 上へ</button><button class="tool" id="f_down">▼ 下へ</button></div></div>${delBtn}${fragBtn}`;
             $('f_text').oninput = () => { m.text = $('f_text').value; render(); };
             $('f_text').addEventListener('change', () => { recordEdit(); save(); });
             $('f_type').onchange = () => { m.type = $('f_type').value; recordEdit(); render(); save(); };
@@ -1392,6 +1490,7 @@
             $('f_up').onclick = () => moveItem(state.messages, m.id, -1);
             $('f_down').onclick = () => moveItem(state.messages, m.id, 1);
             $('f_del').onclick = deleteSelection;
+            $('f_addfrag').onclick = addFragment;
         }
     }
 
@@ -1647,6 +1746,11 @@
         .seq-arrow-filled{fill:${LN};stroke:${LN};stroke-width:1.2}
         .seq-arrow-open{fill:none;stroke:${LN};stroke-width:1.4}
         .seq-label{fill:${TX};font:12px ${FONT}}
+        .seq-activation{fill:${NF};stroke:${NS};stroke-width:1}
+        .frag-rect{fill:none;stroke:${NS};stroke-width:1.2}
+        .frag-tab{fill:${NH};stroke:${NS};stroke-width:1.2}
+        .frag-tab-text{fill:${MU};font:600 11px ${FONT}}
+        .frag-else{stroke:${NS};stroke-width:1;stroke-dasharray:6 4}
         .edge-hit,.temp-line,.marquee,.seq-hit{display:none}`;
     }
     function buildSVG() {
@@ -1741,10 +1845,10 @@ ${inner}
             $('diagramType').value = t;
         } else { commit(); }
         const nd = (t === 'sequence')
-            ? { participants: obj.participants || [], messages: Array.isArray(obj.messages) ? obj.messages : [] }
+            ? { participants: obj.participants || [], messages: Array.isArray(obj.messages) ? obj.messages : [], fragments: Array.isArray(obj.fragments) ? obj.fragments : [] }
             : { nodes: obj.nodes || [], edges: Array.isArray(obj.edges) ? obj.edges : [] };
         project.diagrams[t] = nd; state = nd;
-        const items = (t === 'sequence') ? nd.participants.concat(nd.messages) : nd.nodes.concat(nd.edges);
+        const items = (t === 'sequence') ? nd.participants.concat(nd.messages, nd.fragments) : nd.nodes.concat(nd.edges);
         let mx = 0; items.forEach(o => { const m = /(\d+)$/.exec(o.id || ''); if (m) mx = Math.max(mx, +m[1]); });
         seq = Math.max(seq, mx + 1);
         selection = null; selNodes = new Set(); render(); renderPanel(); fitView(); save();
@@ -1831,6 +1935,9 @@ ${inner}
                 { id: 'm4', from: 'p2', to: 'p4', type: 'sync', text: '決済要求' },
                 { id: 'm5', from: 'p4', to: 'p2', type: 'reply', text: '決済完了' },
                 { id: 'm6', from: 'p2', to: 'p1', type: 'reply', text: '注文確定' }
+            ],
+            fragments: [
+                { id: 'f1', type: 'opt', label: '在庫あり', from: 'm4', to: 'm5', elseAfter: '', elseLabel: '' }
             ] }) }
     };
 
@@ -1891,6 +1998,8 @@ ${inner}
         '  ・同期/非同期/応答を選びライフライン間をドラッグでメッセージ',
         '  ・同じライフラインへドラッグで自己メッセージ',
         '  ・メッセージは時間順、選択して▲▼で並べ替え',
+        '  ・同期呼び出し→応答 で実行仕様バーを自動表示',
+        '  ・プロパティの「フラグメント追加」でalt/loop/optの枠を作成',
         '',
         '【複数選択・整列】',
         '  ・Shift+クリック で複数選択 / Shift+ドラッグ で範囲選択',
@@ -1958,7 +2067,7 @@ ${inner}
         let mx = 0;
         for (const t in project.diagrams) {
             const d = project.diagrams[t];
-            const items = (t === 'sequence') ? (d.participants || []).concat(d.messages || []) : (d.nodes || []).concat(d.edges || []);
+            const items = (t === 'sequence') ? (d.participants || []).concat(d.messages || [], d.fragments || []) : (d.nodes || []).concat(d.edges || []);
             items.forEach(o => { const m = /(\d+)$/.exec(o.id || ''); if (m) mx = Math.max(mx, +m[1]); });
         }
         seq = mx + 1;
