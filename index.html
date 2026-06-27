@@ -30,6 +30,7 @@
             --muted: #64748b;
             --sel: #2563eb;
             --canvas-bg: #f8fafc;
+            --sticky: #fff8c5;
         }
         [data-theme="dark"] {
             --bg: #0d1117;
@@ -53,6 +54,7 @@
             --muted: #8b98a6;
             --sel: #4493f8;
             --canvas-bg: #0e131a;
+            --sticky: #3a371d;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -256,6 +258,13 @@
         .frag-tab-text { fill: var(--muted); font: 600 11px -apple-system,'Segoe UI','Noto Sans JP',sans-serif; }
         .frag-else { stroke: var(--node-stroke); stroke-width: 1; stroke-dasharray: 6 4; }
         .seq-frag.selected .frag-rect, .seq-frag.selected .frag-tab { stroke: var(--sel); stroke-width: 2; }
+        /* ノート（付箋） */
+        .note-rect { fill: var(--sticky); stroke: var(--node-stroke); stroke-width: 1; }
+        .note-fold { fill: none; stroke: var(--node-stroke); stroke-width: 1; }
+        .note-text { fill: var(--text); font: 12px -apple-system,'Segoe UI','Noto Sans JP',sans-serif; }
+        .node.selected .note-rect, .seq-note.selected .note-rect { stroke: var(--sel); stroke-width: 2.2; }
+        .node.multi .note-rect { stroke: var(--sel); stroke-dasharray: 5 3; }
+        .seq-note { cursor: grab; }
 
         .canvas-empty {
             position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -416,22 +425,22 @@
     // 図種ごとの定義（ノード種別 / 関連ツール）
     const DIAGRAMS = {
         class: { label: 'クラス図',
-            nodes: [{ kind: 'class', label: 'クラス' }],
+            nodes: [{ kind: 'class', label: 'クラス' }, { kind: 'note', label: 'ノート' }],
             rels: ['association', 'directed', 'inheritance', 'realization', 'dependency', 'aggregation', 'composition'] },
         state: { label: '状態遷移図',
-            nodes: [{ kind: 'state', label: '状態' }, { kind: 'initial', label: '開始' }, { kind: 'final', label: '終了' }],
+            nodes: [{ kind: 'state', label: '状態' }, { kind: 'initial', label: '開始' }, { kind: 'final', label: '終了' }, { kind: 'note', label: 'ノート' }],
             rels: ['transition'] },
         usecase: { label: 'ユースケース図',
-            nodes: [{ kind: 'actor', label: 'アクター' }, { kind: 'usecase', label: 'ユースケース' }, { kind: 'boundary', label: '境界' }],
+            nodes: [{ kind: 'actor', label: 'アクター' }, { kind: 'usecase', label: 'ユースケース' }, { kind: 'boundary', label: '境界' }, { kind: 'note', label: 'ノート' }],
             rels: ['association', 'directed', 'include', 'extend', 'inheritance'] },
         component: { label: 'コンポーネント図',
-            nodes: [{ kind: 'component', label: 'コンポーネント' }, { kind: 'interface', label: 'インタフェース' }, { kind: 'boundary', label: '境界' }],
+            nodes: [{ kind: 'component', label: 'コンポーネント' }, { kind: 'interface', label: 'インタフェース' }, { kind: 'boundary', label: '境界' }, { kind: 'note', label: 'ノート' }],
             rels: ['dependency', 'association', 'directed'] },
         sequence: { label: 'シーケンス図',
-            nodes: [{ kind: 'participant', label: 'ライフライン' }, { kind: 'actor', label: 'アクター' }],
+            nodes: [{ kind: 'participant', label: 'ライフライン' }, { kind: 'actor', label: 'アクター' }, { kind: 'note', label: 'ノート' }],
             rels: ['sync', 'async', 'reply'] }
     };
-    const NODE_LABEL = { class: 'クラス', state: '状態', initial: '開始', final: '終了', actor: 'アクター', usecase: 'ユースケース', boundary: '境界', component: 'コンポーネント', interface: 'インタフェース', participant: 'ライフライン' };
+    const NODE_LABEL = { class: 'クラス', state: '状態', initial: '開始', final: '終了', actor: 'アクター', usecase: 'ユースケース', boundary: '境界', component: 'コンポーネント', interface: 'インタフェース', participant: 'ライフライン', note: 'ノート' };
     const TOOL_LABEL = { select: '選択' };
 
     // パレット用の小さなプレビューSVG（ツールid: 'select' / 'add:<kind>' / 'rel:<type>'）
@@ -467,6 +476,7 @@
             case 'component': return `<svg viewBox="0 0 26 16"><rect x="5" y="3" width="16" height="10" ${w}/><rect x="3" y="5" width="4" height="2.4" ${w}/><rect x="3" y="9" width="4" height="2.4" ${w}/></svg>`;
             case 'interface': return `<svg viewBox="0 0 26 16"><circle cx="13" cy="8" r="5" ${w}/></svg>`;
             case 'participant': return `<svg viewBox="0 0 26 16"><rect x="7" y="1" width="12" height="6" ${w}/><line x1="13" y1="7" x2="13" y2="15" stroke="currentColor" stroke-width="1.1" stroke-dasharray="2 2"/></svg>`;
+            case 'note': return `<svg viewBox="0 0 26 16"><path d="M4 2 L18 2 L22 6 L22 14 L4 14 Z" ${w}/><path d="M18 2 L18 6 L22 6" ${w}/></svg>`;
         }
         return `<svg viewBox="0 0 26 16"><rect x="4" y="3" width="18" height="10" ${w}/></svg>`;
     }
@@ -476,7 +486,7 @@
     /* ============================================================
      * State / Project（図種ごとに独立したダイアグラムを保持）
      * ============================================================ */
-    function emptyDiagramFor(t) { return t === 'sequence' ? { participants: [], messages: [], fragments: [] } : { nodes: [], edges: [] }; }
+    function emptyDiagramFor(t) { return t === 'sequence' ? { participants: [], messages: [], fragments: [], notes: [] } : { nodes: [], edges: [] }; }
     let project = { type: 'class', diagrams: {} };
     for (const t in { class: 1, state: 1, usecase: 1, component: 1, sequence: 1 }) project.diagrams[t] = emptyDiagramFor(t);
     let state = project.diagrams.class;   // アクティブなダイアグラム
@@ -538,6 +548,11 @@
         else if (kind === 'boundary') { n.w = Math.max(160, n.w || 280); n.h = Math.max(120, n.h || 200); }
         else if (kind === 'component') { const tw = measure(n.name || 'Component', titleFont); n.w = Math.max(150, Math.ceil(tw) + 56); n.h = 58; }
         else if (kind === 'interface') { const tw = measure(n.name || 'Interface', titleFont); n.w = Math.max(96, Math.ceil(tw) + 30); n.h = 58; }
+        else if (kind === 'note') {
+            const nf = "12px " + FONT, ls = (n.text || '').split('\n');
+            let mw = 40; ls.forEach(l => mw = Math.max(mw, measure(l, nf)));
+            n.w = Math.max(80, Math.ceil(mw) + 22); n.h = Math.max(32, ls.length * 16 + 14);
+        }
         else { n.w = Math.max(110, measure(n.name || '', titleFont) + 24); n.h = 48; }
     }
 
@@ -619,6 +634,11 @@
         } else if (kind === 'interface') {
             g.append(el('circle', { class: 'shape', cx, cy: 18, r: 14 }));
             g.append(text(cx, 50, n.name || 'Interface', 'node-title', 'middle'));
+        } else if (kind === 'note') {
+            const fold = 12;
+            g.append(el('path', { class: 'note-rect', d: `M0,0 L${W - fold},0 L${W},${fold} L${W},${H} L0,${H} Z` }));
+            g.append(el('path', { class: 'note-fold', d: `M${W - fold},0 L${W - fold},${fold} L${W},${fold}` }));
+            (n.text || '').split('\n').forEach((l, i) => g.append(text(8, 16 + i * 16, l, 'note-text', 'start')));
         }
         return g;
     }
@@ -740,7 +760,9 @@
         let minX = Infinity, maxX = -Infinity;
         ps.forEach(p => { const x = cx.get(p.id), w = boxW.get(p.id); minX = Math.min(minX, x - w / 2); maxX = Math.max(maxX, x + w / 2 + (msgs.some(m => m.from === p.id && m.to === p.id) ? SEQ.selfW : 0)); });
         if (!ps.length) { minX = 0; maxX = 200; }
-        return { ps, msgs, cx, boxW, lifeTop, firstMsgY, bottomY, minX, maxX };
+        let by = bottomY;
+        for (const nt of (state.notes || [])) { minX = Math.min(minX, nt.x); maxX = Math.max(maxX, nt.x + 140); by = Math.max(by, nt.y + 60); }
+        return { ps, msgs, cx, boxW, lifeTop, firstMsgY, bottomY: by, minX, maxX };
     }
 
     function seqArrow(x, y, dir, type) {
@@ -863,6 +885,19 @@
             g.append(el('rect', { class: 'seq-hit', x: hx1, y: y - SEQ.rowGap / 2, width: hx2 - hx1, height: SEQ.rowGap }));
             frag.append(g);
         });
+        // ノート（最前面・ドラッグ可）
+        const nf = "12px " + FONT, fold = 12;
+        for (const nt of (state.notes || [])) {
+            const ls = (nt.text || '').split('\n');
+            let mw = 40; ls.forEach(l => mw = Math.max(mw, measure(l, nf)));
+            const W = Math.max(80, Math.ceil(mw) + 22), H = Math.max(32, ls.length * 16 + 14);
+            const g = el('g', { class: 'seq-note' + (isSel('snote', nt.id) ? ' selected' : ''), transform: `translate(${nt.x},${nt.y})` });
+            g.dataset.snote = nt.id;
+            g.append(el('path', { class: 'note-rect', d: `M0,0 L${W - fold},0 L${W},${fold} L${W},${H} L0,${H} Z` }));
+            g.append(el('path', { class: 'note-fold', d: `M${W - fold},0 L${W - fold},${fold} L${W},${fold}` }));
+            ls.forEach((l, i) => g.append(text(8, 16 + i * 16, l, 'note-text', 'start')));
+            frag.append(g);
+        }
         edgesLayer.replaceChildren();
         nodesLayer.replaceChildren(frag);
         applyView();
@@ -892,6 +927,14 @@
         setMode('select'); select('msg', m.id);
         render(); save();
     }
+    function createSeqNote(x, y) {
+        commit();
+        const nt = { id: uid('s'), x: Math.round(x - 50), y: Math.round(y - 20), text: 'メモ' };
+        (state.notes || (state.notes = [])).push(nt);
+        setMode('select'); select('snote', nt.id);
+        render(); save();
+        const f = $('f_text'); if (f) { f.focus(); f.select(); }
+    }
     function moveItem(arr, id, dir) {
         const i = arr.findIndex(o => o.id === id); if (i < 0) return;
         const j = i + dir; if (j < 0 || j >= arr.length) return;
@@ -899,9 +942,13 @@
     }
 
     function seqPointerDown(e) {
-        const partEl = e.target.closest('[data-part]'), msgEl = e.target.closest('[data-msg]');
+        const partEl = e.target.closest('[data-part]'), msgEl = e.target.closest('[data-msg]'), noteEl = e.target.closest('[data-snote]');
         const pt = toDiagram(e.clientX, e.clientY);
-        if (mode.startsWith('add:') && !partEl) { createParticipant(mode.slice(4)); return; }
+        if (mode.startsWith('add:')) {
+            const k = mode.slice(4);
+            if (k === 'note') { createSeqNote(pt.x, pt.y); return; }
+            if (!partEl) { createParticipant(k); return; }
+        }
         if (mode.startsWith('rel:')) {
             if (partEl) {
                 const x = seqLayout().cx.get(partEl.dataset.part);
@@ -913,7 +960,12 @@
             return;
         }
         const fragEl = e.target.closest('[data-frag]');
-        if (partEl) select('part', partEl.dataset.part);
+        if (noteEl) {
+            const nt = (state.notes || []).find(o => o.id === noteEl.dataset.snote);
+            select('snote', noteEl.dataset.snote);
+            if (nt) { drag = { kind: 'seqnote', id: nt.id, dx: pt.x - nt.x, dy: pt.y - nt.y, moved: false }; canvas.setPointerCapture(e.pointerId); }
+        }
+        else if (partEl) select('part', partEl.dataset.part);
         else if (msgEl) select('msg', msgEl.dataset.msg);
         else if (fragEl) select('frag', fragEl.dataset.frag);
         else { select(null); drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, ox: view.tx, oy: view.ty }; canvas.setPointerCapture(e.pointerId); }
@@ -922,6 +974,7 @@
         if (!drag) return;
         if (drag.kind === 'pan') { view.tx = drag.ox + (e.clientX - drag.sx); view.ty = drag.oy + (e.clientY - drag.sy); applyView(); }
         else if (drag.kind === 'seqmsg') { const pt = toDiagram(e.clientX, e.clientY); drag.temp.setAttribute('x2', pt.x); drag.temp.setAttribute('y2', pt.y); }
+        else if (drag.kind === 'seqnote') { const pt = toDiagram(e.clientX, e.clientY); const nt = state.notes.find(o => o.id === drag.id); if (nt) { nt.x = snapv(pt.x - drag.dx); nt.y = snapv(pt.y - drag.dy); drag.moved = true; renderSequence(); } }
     }
     function seqPointerUp(e) {
         if (!drag) return;
@@ -930,7 +983,7 @@
             const pt = toDiagram(e.clientX, e.clientY);
             const target = nearestParticipant(pt.x);
             if (target) addMessage(drag.from, target, drag.rel);
-        }
+        } else if (drag.kind === 'seqnote' && drag.moved) { commit(); save(); }
         try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
         drag = null;
     }
@@ -1113,6 +1166,7 @@
             case 'boundary': return { name: 'System', w: 280, h: 200 };
             case 'component': return { name: 'Component' };
             case 'interface': return { name: 'Interface' };
+            case 'note': return { text: 'メモ' };
         }
         return { name: '' };
     }
@@ -1129,7 +1183,7 @@
         setMode('select');
         select('node', n.id);
         render(); save();
-        const f = $('f_name'); if (f) { f.focus(); f.select(); }
+        const f = $('f_text') || $('f_name'); if (f) { f.focus(); f.select(); }
     }
     const layoutNodeKindTmp = { name: '', attributes: [], methods: [] };
 
@@ -1149,6 +1203,7 @@
             commit();
             if (selection.kind === 'part') { state.participants = state.participants.filter(p => p.id !== selection.id); state.messages = state.messages.filter(m => m.from !== selection.id && m.to !== selection.id); }
             else if (selection.kind === 'frag') { state.fragments = (state.fragments || []).filter(f => f.id !== selection.id); }
+            else if (selection.kind === 'snote') { state.notes = (state.notes || []).filter(n => n.id !== selection.id); }
             else state.messages = state.messages.filter(m => m.id !== selection.id);
             selection = null; render(); renderPanel(); save(); return;
         }
@@ -1380,6 +1435,12 @@
                 $('f_name').oninput = $('f_stereo').oninput = $('f_attrs').oninput = $('f_methods').oninput = upd;
                 ['f_name', 'f_stereo', 'f_attrs', 'f_methods'].forEach(id => $(id).addEventListener('change', () => { recordEdit(); save(); }));
                 $('f_del').onclick = deleteSelection;
+            } else if (kind === 'note') {
+                props.innerHTML = `<h3>ノート</h3>
+                    <div class="field"><label>本文</label><textarea id="f_text" placeholder="メモ・注釈">${esc(n.text || '')}</textarea></div>${delBtn}`;
+                $('f_text').oninput = () => { n.text = $('f_text').value; render(); };
+                $('f_text').addEventListener('change', () => { recordEdit(); save(); });
+                $('f_del').onclick = deleteSelection;
             } else if (kind === 'boundary') {
                 props.innerHTML = `<h3>境界</h3>
                     <div class="field"><label>名前</label><input id="f_name" value="${esc(n.name)}"></div>
@@ -1436,6 +1497,15 @@
                 ・同じライフラインへドラッグで自己メッセージ<br>
                 ・同期呼び出し→応答 で<b>実行仕様バー</b>を自動表示</div>${fragBtn}`;
             $('f_addfrag').onclick = addFragment;
+            return;
+        }
+        if (selection.kind === 'snote') {
+            const nt = (state.notes || []).find(o => o.id === selection.id); if (!nt) { select(null); return; }
+            props.innerHTML = `<h3>ノート</h3>
+                <div class="field"><label>本文</label><textarea id="f_text" placeholder="メモ・注釈">${esc(nt.text || '')}</textarea></div>${delBtn}`;
+            $('f_text').oninput = () => { nt.text = $('f_text').value; render(); };
+            $('f_text').addEventListener('change', () => { recordEdit(); save(); });
+            $('f_del').onclick = deleteSelection;
             return;
         }
         if (selection.kind === 'part') {
@@ -1574,6 +1644,7 @@
         const nameOf = id => { const n = nodeById(id); return n ? n.name : id; };
         const L = ['@startuml'];
         for (const n of state.nodes) {
+            if (n.kind === 'note') continue;            // ノートはDSL対象外
             let kw = 'class', stereo = n.stereotype || '';
             if (stereo === 'interface') { kw = 'interface'; stereo = ''; }
             else if (stereo === 'abstract') { kw = 'abstract class'; stereo = ''; }
@@ -1667,6 +1738,8 @@
         });
         const newEdges = parsed.edges.filter(e => idByName.has(e.fromName) && idByName.has(e.toName))
             .map(e => ({ id: uid('e'), from: idByName.get(e.fromName), to: idByName.get(e.toName), type: e.type, fromMult: e.fromMult || '', toMult: e.toMult || '', label: e.label || '' }));
+        // ノート（DSL対象外）は維持
+        newNodes.push(...state.nodes.filter(n => n.kind === 'note'));
         state.nodes = newNodes; state.edges = newEdges;
         if (selection && selection.kind === 'node' && !state.nodes.some(n => n.id === selection.id)) selection = null;
         selNodes = new Set([...selNodes].filter(id => state.nodes.some(n => n.id === id)));
@@ -1740,6 +1813,9 @@
         .boundary-rect{fill:none;stroke:${NS};stroke-width:1.4;stroke-dasharray:7 5}
         .boundary-title{fill:${MU};font:600 12px ${FONT}}
         .comp-icon{fill:${NH};stroke:${NS};stroke-width:1.2}
+        .note-rect{fill:${cssVar('--sticky')};stroke:${NS};stroke-width:1}
+        .note-fold{fill:none;stroke:${NS};stroke-width:1}
+        .note-text{fill:${TX};font:12px ${FONT}}
         .seq-life{stroke:${NS};stroke-width:1.1;stroke-dasharray:4 4}
         .seq-line{stroke:${LN};stroke-width:1.4;fill:none}
         .seq-line.dashed{stroke-dasharray:7 5}
@@ -1845,10 +1921,10 @@ ${inner}
             $('diagramType').value = t;
         } else { commit(); }
         const nd = (t === 'sequence')
-            ? { participants: obj.participants || [], messages: Array.isArray(obj.messages) ? obj.messages : [], fragments: Array.isArray(obj.fragments) ? obj.fragments : [] }
+            ? { participants: obj.participants || [], messages: Array.isArray(obj.messages) ? obj.messages : [], fragments: Array.isArray(obj.fragments) ? obj.fragments : [], notes: Array.isArray(obj.notes) ? obj.notes : [] }
             : { nodes: obj.nodes || [], edges: Array.isArray(obj.edges) ? obj.edges : [] };
         project.diagrams[t] = nd; state = nd;
-        const items = (t === 'sequence') ? nd.participants.concat(nd.messages, nd.fragments) : nd.nodes.concat(nd.edges);
+        const items = (t === 'sequence') ? nd.participants.concat(nd.messages, nd.fragments, nd.notes) : nd.nodes.concat(nd.edges);
         let mx = 0; items.forEach(o => { const m = /(\d+)$/.exec(o.id || ''); if (m) mx = Math.max(mx, +m[1]); });
         seq = Math.max(seq, mx + 1);
         selection = null; selNodes = new Set(); render(); renderPanel(); fitView(); save();
@@ -1992,6 +2068,7 @@ ${inner}
         '  ・関連線ツールを選び、ノードからノードへドラッグして接続',
         '  ・選択ツールでノードをドラッグして移動',
         '  ・右パネルで名前・属性・操作・多重度・ラベルを編集',
+        '  ・「ノート」で付箋（注釈）を全図種に配置できます',
         '',
         '【シーケンス図】',
         '  ・ライフライン/アクターでクリックして追加',
@@ -2067,7 +2144,7 @@ ${inner}
         let mx = 0;
         for (const t in project.diagrams) {
             const d = project.diagrams[t];
-            const items = (t === 'sequence') ? (d.participants || []).concat(d.messages || [], d.fragments || []) : (d.nodes || []).concat(d.edges || []);
+            const items = (t === 'sequence') ? (d.participants || []).concat(d.messages || [], d.fragments || [], d.notes || []) : (d.nodes || []).concat(d.edges || []);
             items.forEach(o => { const m = /(\d+)$/.exec(o.id || ''); if (m) mx = Math.max(mx, +m[1]); });
         }
         seq = mx + 1;
