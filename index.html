@@ -179,8 +179,27 @@
             font-variant-numeric: tabular-nums; user-select: none; border-right: 1px solid var(--border); line-height: 30px; }
 
         /* ---------- Canvas ---------- */
+        .canvas-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
         .canvas-area { flex: 1; position: relative; overflow: hidden; min-height: 0;
             background: var(--canvas-bg) radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0) 0 0 / 22px 22px; }
+        .btn.toggle-on { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .btn.toggle-on:hover { background: var(--accent-hover); color: #fff; }
+
+        /* text drawer */
+        .text-drawer { flex: none; height: 40%; min-height: 120px; display: flex; flex-direction: column;
+            border-top: 1px solid var(--border); background: var(--panel); }
+        .text-drawer[hidden] { display: none; }
+        .drawer-head { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-bottom: 1px solid var(--border);
+            font-size: .76rem; color: var(--text-soft); background: var(--panel-2); }
+        .drawer-head em { font-style: normal; font-size: .66rem; color: var(--text-faint); border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px; margin-left: 4px; }
+        .drawer-head .dsl-status { margin-left: auto; font-size: .72rem; padding: 2px 8px; border-radius: 4px; }
+        .dsl-status.ok { color: var(--success-fg); }
+        .dsl-status.err { color: var(--error-fg); }
+        #dsl { flex: 1; width: 100%; border: none; outline: none; resize: none; padding: 10px 12px;
+            font-family: 'SF Mono','JetBrains Mono','Consolas',monospace; font-size: 12.5px; line-height: 1.55;
+            tab-size: 2; background: var(--panel); color: var(--text); }
+        .marquee { fill: var(--accent); fill-opacity: .08; stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; }
+        .node.multi .node-rect { stroke: var(--sel); stroke-dasharray: 5 3; }
         #canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
         #canvas.mode-select .node:hover .node-rect { stroke: var(--accent); }
         #canvas.mode-rel { cursor: crosshair; }
@@ -287,8 +306,11 @@
                         <button class="zbtn" id="zoomIn" title="拡大" aria-label="拡大">+</button>
                         <button class="zbtn" id="zoomFit" title="全体表示 (Shift+F)" aria-label="全体表示">⤢</button>
                     </div>
+                    <button class="btn icon-only" id="snapBtn" title="グリッド吸着 ON/OFF" aria-label="グリッド吸着"><span class="ico">🧲</span></button>
+                    <button class="btn icon-only" id="layoutBtn" title="自動整列" aria-label="自動整列"><span class="ico">▦</span></button>
                 </div>
                 <div class="toolbar-group">
+                    <button class="btn" id="textBtn" title="テキスト表示・編集（双方向同期）"><span class="ico">&lt;/&gt;</span>テキスト</button>
                     <select class="btn" id="scaleSelect" title="PNG出力解像度" aria-label="PNG解像度" style="padding:6px 9px;">
                         <option value="1">1x</option>
                         <option value="2" selected>2x</option>
@@ -301,9 +323,21 @@
                     <button class="btn icon-only" id="shareBtn" title="共有リンクをコピー" aria-label="共有リンク"><span class="ico">🔗</span></button>
                 </div>
             </div>
-            <div class="canvas-area" id="canvasArea">
-                <svg id="canvas" xmlns="http://www.w3.org/2000/svg"></svg>
-                <div class="canvas-empty" id="emptyState">「クラス追加」を選んでキャンバスをクリック、または上のテンプレートから開始</div>
+            <div class="canvas-wrap" id="canvasWrap">
+                <div class="canvas-area" id="canvasArea">
+                    <svg id="canvas" xmlns="http://www.w3.org/2000/svg"></svg>
+                    <div class="canvas-empty" id="emptyState">「クラス追加」を選んでキャンバスをクリック、または上のテンプレートから開始</div>
+                </div>
+                <div class="text-drawer" id="textDrawer" hidden>
+                    <div class="drawer-head">
+                        <span>PlantUML風テキスト <em>双方向同期</em></span>
+                        <span class="dsl-status" id="dslStatus">OK</span>
+                        <button class="btn icon-only" id="dslCopyBtn" title="テキストをコピー"><span class="ico">⧉</span></button>
+                        <button class="btn icon-only" id="textCloseBtn" title="閉じる"><span class="ico">✕</span></button>
+                    </div>
+                    <textarea id="dsl" spellcheck="false" autocapitalize="off" autocorrect="off"
+                        placeholder="@startuml&#10;class Foo {&#10;  - bar: int&#10;  + baz(): void&#10;}&#10;Foo --|> Base&#10;@enduml"></textarea>
+                </div>
             </div>
         </section>
     </div>
@@ -350,7 +384,11 @@
      * State
      * ============================================================ */
     let state = { nodes: [], edges: [] };
-    let selection = null;          // {kind:'node'|'edge', id}
+    let selection = null;          // {kind:'node'|'edge', id}  ← プロパティ表示用の主選択
+    let selNodes = new Set();      // 複数選択中のノードid
+    let clipboard = null;          // コピーしたノード群
+    let snapOn = false;            // グリッド吸着
+    const GRID = 10;
     let mode = 'select';
     const view = { tx: 60, ty: 60, s: 1 };
     let seq = 1;
@@ -422,10 +460,12 @@
         $('countLabel').textContent = `${state.nodes.length} クラス / ${state.edges.length} 関連`;
         $('undoBtn').disabled = !history.length;
         $('redoBtn').disabled = !future.length;
+        syncTextFromDiagram();
     }
 
     function drawNode(n) {
-        const g = el('g', { class: 'node' + (isSel('node', n.id) ? ' selected' : ''), transform: `translate(${n.x},${n.y})` });
+        const cls = 'node' + (isSel('node', n.id) ? ' selected' : '') + (selNodes.has(n.id) && !isSel('node', n.id) ? ' multi' : '');
+        const g = el('g', { class: cls, transform: `translate(${n.x},${n.y})` });
         g.dataset.node = n.id;
         g.append(el('rect', { class: 'node-rect', x: 0, y: 0, width: n.w, height: n.h, rx: 3 }));
         g.append(el('rect', { class: 'node-head', x: 1, y: 1, width: n.w - 2, height: n._headH - 1, rx: 2 }));
@@ -609,18 +649,36 @@
 
         // select mode
         if (nodeEl) {
-            select('node', nodeEl.dataset.node);
-            const n = nodeById(nodeEl.dataset.node);
-            drag = { kind: 'node', id: n.id, dx: pt.x - n.x, dy: pt.y - n.y, moved: false };
+            const id = nodeEl.dataset.node;
+            if (e.shiftKey) {                       // 複数選択トグル
+                if (selNodes.has(id)) selNodes.delete(id); else selNodes.add(id);
+                selection = selNodes.size ? { kind: 'node', id } : null;
+                refreshSelectionStyles(); renderPanel();
+                return;
+            }
+            if (!selNodes.has(id)) selNodes = new Set([id]);   // 単独選択（グループ内ならグループ維持）
+            selection = { kind: 'node', id };
+            refreshSelectionStyles(); renderPanel();
+            const start = {}; selNodes.forEach(nid => { const nn = nodeById(nid); start[nid] = { x: nn.x, y: nn.y }; });
+            drag = { kind: 'node', ids: [...selNodes], start, ox: pt.x, oy: pt.y, moved: false };
             canvas.setPointerCapture(e.pointerId);
         } else if (edgeEl) {
+            selNodes = new Set();
             select('edge', edgeEl.dataset.edge);
+        } else if (e.shiftKey) {                    // 範囲選択（マーキー）
+            const m = el('rect', { class: 'marquee' });
+            overlay.append(m);
+            drag = { kind: 'marquee', ox: pt.x, oy: pt.y, rect: m, box: null };
+            canvas.setPointerCapture(e.pointerId);
         } else {
+            selNodes = new Set();
             select(null);
             drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, ox: view.tx, oy: view.ty };
             canvas.setPointerCapture(e.pointerId);
         }
     });
+
+    const snapv = v => snapOn ? Math.round(v / GRID) * GRID : Math.round(v);
 
     canvas.addEventListener('pointermove', e => {
         if (!drag) return;
@@ -630,13 +688,19 @@
             applyView();
         } else if (drag.kind === 'node') {
             const pt = toDiagram(e.clientX, e.clientY);
-            const n = nodeById(drag.id);
-            n.x = Math.round(pt.x - drag.dx); n.y = Math.round(pt.y - drag.dy);
+            const dx = pt.x - drag.ox, dy = pt.y - drag.oy;
+            for (const id of drag.ids) { const nn = nodeById(id), s = drag.start[id]; nn.x = snapv(s.x + dx); nn.y = snapv(s.y + dy); }
             drag.moved = true;
             scheduleRender();
         } else if (drag.kind === 'edge') {
             const pt = toDiagram(e.clientX, e.clientY);
             drag.temp.setAttribute('x2', pt.x); drag.temp.setAttribute('y2', pt.y);
+        } else if (drag.kind === 'marquee') {
+            const pt = toDiagram(e.clientX, e.clientY);
+            const x = Math.min(pt.x, drag.ox), y = Math.min(pt.y, drag.oy), w = Math.abs(pt.x - drag.ox), h = Math.abs(pt.y - drag.oy);
+            drag.rect.setAttribute('x', x); drag.rect.setAttribute('y', y);
+            drag.rect.setAttribute('width', w); drag.rect.setAttribute('height', h);
+            drag.box = { x, y, w, h };
         }
     });
 
@@ -651,6 +715,15 @@
             }
         } else if (drag.kind === 'node' && drag.moved) {
             commit(); save();
+        } else if (drag.kind === 'marquee') {
+            drag.rect.remove();
+            const b = drag.box;
+            if (b && b.w > 3 && b.h > 3) {
+                selNodes = new Set(state.nodes.filter(n => n.x < b.x + b.w && n.x + n.w > b.x && n.y < b.y + b.h && n.y + n.h > b.y).map(n => n.id));
+                const arr = [...selNodes];
+                selection = arr.length ? { kind: 'node', id: arr[arr.length - 1] } : null;
+                refreshSelectionStyles(); renderPanel();
+            }
         }
         try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
         drag = null;
@@ -689,15 +762,129 @@
     }
 
     function deleteSelection() {
-        if (!selection) return;
+        if (!selection && !selNodes.size) return;
         commit();
-        if (selection.kind === 'node') {
-            state.nodes = state.nodes.filter(n => n.id !== selection.id);
-            state.edges = state.edges.filter(e => e.from !== selection.id && e.to !== selection.id);
-        } else {
+        if (selNodes.size) {
+            const ids = selNodes;
+            state.nodes = state.nodes.filter(n => !ids.has(n.id));
+            state.edges = state.edges.filter(e => !ids.has(e.from) && !ids.has(e.to));
+            selNodes = new Set();
+        } else if (selection.kind === 'edge') {
             state.edges = state.edges.filter(e => e.id !== selection.id);
         }
         select(null); render(); save();
+    }
+
+    /* ============================================================
+     * 編集操作: 整列 / 複製 / コピペ / 自動レイアウト
+     * ============================================================ */
+    function selectedNodeList() { return state.nodes.filter(n => selNodes.has(n.id)); }
+
+    function align(kind) {
+        const ns = selectedNodeList(); if (ns.length < 2) return;
+        commit();
+        const xs = ns.map(n => n.x), ys = ns.map(n => n.y);
+        const rs = ns.map(n => n.x + n.w), bs = ns.map(n => n.y + n.h);
+        const minX = Math.min(...xs), maxR = Math.max(...rs), minY = Math.min(...ys), maxB = Math.max(...bs);
+        if (kind === 'left') ns.forEach(n => n.x = minX);
+        else if (kind === 'right') ns.forEach(n => n.x = maxR - n.w);
+        else if (kind === 'hcenter') { const c = (minX + maxR) / 2; ns.forEach(n => n.x = Math.round(c - n.w / 2)); }
+        else if (kind === 'top') ns.forEach(n => n.y = minY);
+        else if (kind === 'bottom') ns.forEach(n => n.y = maxB - n.h);
+        else if (kind === 'vcenter') { const c = (minY + maxB) / 2; ns.forEach(n => n.y = Math.round(c - n.h / 2)); }
+        else if (kind === 'hdist') {
+            const sorted = [...ns].sort((a, b) => a.x - b.x);
+            const left = sorted[0].x, right = sorted[sorted.length - 1].x;
+            const gap = (right - left) / (sorted.length - 1);
+            sorted.forEach((n, i) => n.x = Math.round(left + gap * i));
+        } else if (kind === 'vdist') {
+            const sorted = [...ns].sort((a, b) => a.y - b.y);
+            const top = sorted[0].y, bot = sorted[sorted.length - 1].y;
+            const gap = (bot - top) / (sorted.length - 1);
+            sorted.forEach((n, i) => n.y = Math.round(top + gap * i));
+        }
+        render(); save();
+    }
+
+    function cloneNodes(ids, dx, dy) {
+        const map = new Map();
+        const newNodes = [...ids].map(id => {
+            const o = nodeById(id); if (!o) return null;
+            const c = JSON.parse(JSON.stringify(o));
+            c.id = uid('n'); c.x = o.x + dx; c.y = o.y + dy;
+            map.set(id, c.id); return c;
+        }).filter(Boolean);
+        // 両端とも選択内にある関連だけ複製
+        const newEdges = state.edges.filter(e => map.has(e.from) && map.has(e.to))
+            .map(e => Object.assign(JSON.parse(JSON.stringify(e)), { id: uid('e'), from: map.get(e.from), to: map.get(e.to) }));
+        return { newNodes, newEdges };
+    }
+
+    function duplicateSelection() {
+        const ids = selNodes.size ? [...selNodes] : (selection && selection.kind === 'node' ? [selection.id] : []);
+        if (!ids.length) return;
+        commit();
+        const { newNodes, newEdges } = cloneNodes(ids, 24, 24);
+        state.nodes.push(...newNodes); state.edges.push(...newEdges);
+        selNodes = new Set(newNodes.map(n => n.id));
+        selection = { kind: 'node', id: newNodes[newNodes.length - 1].id };
+        render(); refreshSelectionStyles(); renderPanel(); save();
+        toast(newNodes.length + '件を複製しました');
+    }
+
+    function copySelection() {
+        const ids = selNodes.size ? [...selNodes] : (selection && selection.kind === 'node' ? [selection.id] : []);
+        if (!ids.length) return;
+        const { newNodes, newEdges } = cloneNodes(ids, 0, 0);
+        clipboard = { nodes: newNodes, edges: newEdges };
+        toast(ids.length + '件をコピーしました');
+    }
+
+    function pasteClipboard() {
+        if (!clipboard) return;
+        commit();
+        const idmap = new Map();
+        const ns = clipboard.nodes.map(o => { const c = JSON.parse(JSON.stringify(o)); const nid = uid('n'); idmap.set(o.id, nid); c.id = nid; c.x += 28; c.y += 28; return c; });
+        const es = clipboard.edges.map(o => Object.assign(JSON.parse(JSON.stringify(o)), { id: uid('e'), from: idmap.get(o.from), to: idmap.get(o.to) }));
+        state.nodes.push(...ns); state.edges.push(...es);
+        // 次回ペーストでさらにずれるよう保持を更新
+        clipboard = { nodes: ns.map(n => JSON.parse(JSON.stringify(n))), edges: es.map(e => JSON.parse(JSON.stringify(e))) };
+        selNodes = new Set(ns.map(n => n.id));
+        selection = { kind: 'node', id: ns[ns.length - 1].id };
+        render(); refreshSelectionStyles(); renderPanel(); save();
+        toast(ns.length + '件を貼り付けました');
+    }
+
+    // 継承の親→子を上から下へ並べる簡易レイヤ自動レイアウト
+    function autoLayout() {
+        if (!state.nodes.length) return;
+        commit();
+        const level = new Map(state.nodes.map(n => [n.id, 0]));
+        // 継承/実現: from=子, to=親 → 子のレベル = 親+1
+        for (let iter = 0; iter < state.nodes.length; iter++) {
+            let changed = false;
+            for (const e of state.edges) {
+                if (e.type === 'inheritance' || e.type === 'realization') {
+                    const want = level.get(e.to) + 1;
+                    if (want > level.get(e.from)) { level.set(e.from, want); changed = true; }
+                }
+            }
+            if (!changed) break;
+        }
+        const rows = {};
+        state.nodes.forEach(n => { (rows[level.get(n.id)] ||= []).push(n); });
+        const HGAP = 60, VGAP = 90; let y = 40;
+        Object.keys(rows).map(Number).sort((a, b) => a - b).forEach(lv => {
+            const row = rows[lv];
+            row.forEach(layoutNode);
+            const totW = row.reduce((s, n) => s + n.w, 0) + HGAP * (row.length - 1);
+            let x = Math.max(40, (1000 - totW) / 2);
+            let maxH = 0;
+            row.forEach(n => { n.x = Math.round(x); n.y = Math.round(y); x += n.w + HGAP; maxH = Math.max(maxH, n.h); });
+            y += maxH + VGAP;
+        });
+        render(); save(); fitView();
+        toast('自動整列しました');
     }
 
     /* ============================================================
@@ -709,12 +896,12 @@
     function undo() {
         if (!history.length) return;
         future.push(snap()); state = JSON.parse(history.pop());
-        selection = null; render(); renderPanel(); save();
+        selection = null; selNodes = new Set(); render(); renderPanel(); save();
     }
     function redo() {
         if (!future.length) return;
         history.push(snap()); state = JSON.parse(future.pop());
-        selection = null; render(); renderPanel(); save();
+        selection = null; selNodes = new Set(); render(); renderPanel(); save();
     }
     $('undoBtn').onclick = undo;
     $('redoBtn').onclick = redo;
@@ -723,11 +910,18 @@
      * Selection & properties panel
      * ============================================================ */
     function isSel(kind, id) { return selection && selection.kind === kind && selection.id === id; }
+    function refreshSelectionStyles() {
+        nodesLayer.querySelectorAll('.node').forEach(g => {
+            const id = g.dataset.node;
+            g.classList.toggle('selected', isSel('node', id));
+            g.classList.toggle('multi', selNodes.has(id) && !isSel('node', id));
+        });
+        edgesLayer.querySelectorAll('.edge').forEach(g => g.classList.toggle('selected', isSel('edge', g.dataset.edge)));
+    }
     function select(kind, id) {
         selection = kind ? { kind, id } : null;
-        // update classes cheaply
-        nodesLayer.querySelectorAll('.node').forEach(g => g.classList.toggle('selected', isSel('node', g.dataset.node)));
-        edgesLayer.querySelectorAll('.edge').forEach(g => g.classList.toggle('selected', isSel('edge', g.dataset.edge)));
+        selNodes = kind === 'node' ? new Set([id]) : new Set();
+        refreshSelectionStyles();
         renderPanel();
     }
 
@@ -737,13 +931,36 @@
     function recordEdit() { if (editBaseline) { history.push(editBaseline); if (history.length > 120) history.shift(); future = []; editBaseline = snap(); $('undoBtn').disabled = false; } }
 
     function renderPanel() {
+        if (selNodes.size >= 2) {                  // 複数選択 → 整列パネル
+            props.innerHTML = `<h3>複数選択（${selNodes.size}件）</h3>
+                <div class="field"><label>整列</label>
+                  <div class="tool-grid">
+                    <button class="tool" data-align="left">左揃え</button>
+                    <button class="tool" data-align="hcenter">左右中央</button>
+                    <button class="tool" data-align="right">右揃え</button>
+                    <button class="tool" data-align="top">上揃え</button>
+                    <button class="tool" data-align="vcenter">上下中央</button>
+                    <button class="tool" data-align="bottom">下揃え</button>
+                    <button class="tool" data-align="hdist">水平等間隔</button>
+                    <button class="tool" data-align="vdist">垂直等間隔</button>
+                  </div>
+                </div>
+                <button class="btn" id="m_dup" style="width:100%;margin-bottom:8px"><span class="ico">⧉</span> 複製 (Ctrl+D)</button>
+                <button class="btn danger" id="m_del" style="width:100%"><span class="ico">🗑</span> ${selNodes.size}件を削除</button>`;
+            props.querySelectorAll('[data-align]').forEach(b => b.onclick = () => align(b.dataset.align));
+            $('m_dup').onclick = duplicateSelection;
+            $('m_del').onclick = deleteSelection;
+            return;
+        }
         if (!selection) {
             props.innerHTML = `<h3>使い方</h3><div class="empty-hint">
                 ・左の<b>ツール</b>でモードを選択<br>
                 ・<b>クラス追加</b>でキャンバスをクリック（または空白をダブルクリック）<br>
                 ・<b>関連線</b>はノードからノードへドラッグ<br>
-                ・<kbd>Delete</kbd> 選択を削除 / <kbd>Ctrl+Z</kbd> 取消<br>
-                ・ホイールで拡大縮小、空白ドラッグで移動</div>`;
+                ・<kbd>Shift</kbd>+クリック / ドラッグで<b>複数選択</b><br>
+                ・<kbd>Ctrl+D</kbd> 複製 / <kbd>Ctrl+C/V</kbd> コピペ<br>
+                ・<kbd>Delete</kbd> 削除 / <kbd>Ctrl+Z</kbd> 取消<br>
+                ・<b>&lt;/&gt;テキスト</b>でPlantUML風コードを双方向編集</div>`;
             return;
         }
         if (selection.kind === 'node') {
@@ -802,6 +1019,175 @@
         setStatus(m === 'select' ? '' : 'ok', m === 'select' ? '選択モード' :
             m === 'class' ? 'クリックでクラス配置' : REL[m].label + ': ノード間をドラッグ');
     }
+
+    /* ============================================================
+     * テキスト⇄図 双方向同期（PlantUML風DSL）
+     * ============================================================ */
+    const dsl = $('dsl'), textDrawer = $('textDrawer');
+    let drawerOpen = false;
+
+    function ident(name) { return /^[A-Za-z_][\w]*$/.test(name) ? name : '"' + String(name).replace(/"/g, '') + '"'; }
+
+    function edgeToDSL(e, nameOf) {
+        const F = nameOf(e.from), T = nameOf(e.to);
+        let left, right, op, lm, rm;
+        switch (e.type) {
+            case 'inheritance': left = T; right = F; op = '<|--'; lm = e.toMult; rm = e.fromMult; break;
+            case 'realization': left = T; right = F; op = '<|..'; lm = e.toMult; rm = e.fromMult; break;
+            case 'directed':    left = F; right = T; op = '-->'; lm = e.fromMult; rm = e.toMult; break;
+            case 'dependency':  left = F; right = T; op = '..>'; lm = e.fromMult; rm = e.toMult; break;
+            case 'aggregation': left = F; right = T; op = 'o--'; lm = e.fromMult; rm = e.toMult; break;
+            case 'composition': left = F; right = T; op = '*--'; lm = e.fromMult; rm = e.toMult; break;
+            default:            left = F; right = T; op = '--';  lm = e.fromMult; rm = e.toMult;
+        }
+        let s = ident(left);
+        if (lm) s += ` "${lm}"`;
+        s += ' ' + op + ' ';
+        if (rm) s += `"${rm}" `;
+        s += ident(right);
+        if (e.label) s += ' : ' + e.label;
+        return s;
+    }
+
+    function toDSL() {
+        const nameOf = id => { const n = nodeById(id); return n ? n.name : id; };
+        const L = ['@startuml'];
+        for (const n of state.nodes) {
+            let kw = 'class', stereo = n.stereotype || '';
+            if (stereo === 'interface') { kw = 'interface'; stereo = ''; }
+            else if (stereo === 'abstract') { kw = 'abstract class'; stereo = ''; }
+            const head = kw + ' ' + ident(n.name) + (stereo ? ` <<${stereo}>>` : '');
+            const body = [...(n.attributes || []), ...(n.methods || [])];
+            if (body.length) { L.push(head + ' {'); body.forEach(m => L.push('  ' + m)); L.push('}'); }
+            else L.push(head);
+        }
+        if (state.nodes.length && state.edges.length) L.push('');
+        for (const e of state.edges) L.push(edgeToDSL(e, nameOf));
+        L.push('@enduml');
+        return L.join('\n');
+    }
+
+    const REL_OPS = {
+        '<|--': ['inheritance', 'RL'], '--|>': ['inheritance', 'LR'],
+        '<|..': ['realization', 'RL'], '..|>': ['realization', 'LR'],
+        '..>': ['dependency', 'LR'], '<..': ['dependency', 'RL'],
+        '-->': ['directed', 'LR'], '<--': ['directed', 'RL'],
+        '*--': ['composition', 'LR'], '--*': ['composition', 'RL'],
+        'o--': ['aggregation', 'LR'], '--o': ['aggregation', 'RL'],
+        '--': ['association', 'LR'], '..': ['association', 'LR']
+    };
+    const REL_RE = /^("([^"]+)"|[\w]+)\s*(?:"([^"]*)")?\s*(<\|--|--\|>|<\|\.\.|\.\.\|>|\.\.>|<\.\.|-->|<--|\*--|--\*|o--|--o|\.\.|--)\s*(?:"([^"]*)")?\s*("([^"]+)"|[\w]+)\s*(?::\s*(.+))?$/;
+    const CLASS_RE = /^(abstract\s+class|abstract|class|interface|enum)\s+("([^"]+)"|[\w]+)\s*(?:<<\s*([^>]+?)\s*>>)?\s*(\{)?\s*$/i;
+
+    function parseDSL(src) {
+        const nodes = [], edges = [], map = new Map();
+        const ensure = name => { if (!map.has(name)) { const o = { name, stereotype: '', attributes: [], methods: [] }; map.set(name, o); nodes.push(o); } return map.get(name); };
+        let cur = null;
+        for (const raw of src.split('\n')) {
+            const line = raw.trim();
+            if (!line || /^@(start|end)uml/i.test(line) || line.startsWith("'")) continue;
+            if (cur) {
+                if (line === '}') { cur = null; continue; }
+                if (/[()]/.test(line)) cur.methods.push(line); else cur.attributes.push(line);
+                continue;
+            }
+            const cm = line.match(CLASS_RE);
+            if (cm) {
+                const name = cm[3] || cm[2];
+                const node = ensure(name);
+                const kw = cm[1].toLowerCase();
+                if (/interface/.test(kw)) node.stereotype = 'interface';
+                else if (/abstract/.test(kw)) node.stereotype = 'abstract';
+                if (cm[4]) node.stereotype = cm[4].trim();
+                if (cm[5] === '{') cur = node;
+                continue;
+            }
+            const rm = line.match(REL_RE);
+            if (rm) {
+                const left = rm[2] || rm[1], leftMult = rm[3] || '', op = rm[4], rightMult = rm[5] || '', right = rm[7] || rm[6], label = (rm[8] || '').trim();
+                const def = REL_OPS[op]; if (!def) continue;
+                const [type, dir] = def;
+                ensure(left); ensure(right);
+                let from, to, fromMult, toMult;
+                if (type === 'inheritance' || type === 'realization') {
+                    if (dir === 'RL') { to = left; from = right; toMult = leftMult; fromMult = rightMult; }
+                    else { from = left; to = right; fromMult = leftMult; toMult = rightMult; }
+                } else {
+                    if (dir === 'LR') { from = left; to = right; fromMult = leftMult; toMult = rightMult; }
+                    else { from = right; to = left; fromMult = rightMult; toMult = leftMult; }
+                }
+                edges.push({ fromName: from, toName: to, type, fromMult, toMult, label });
+            }
+            // 認識できない行は無視
+        }
+        return { nodes, edges };
+    }
+
+    function nextFreePos(taken) {
+        // 既存ノードと重ならない位置を簡易探索
+        for (let row = 0; row < 40; row++) for (let col = 0; col < 6; col++) {
+            const x = 60 + col * 220, y = 60 + row * 150;
+            if (!taken.some(n => Math.abs(n.x - x) < 180 && Math.abs(n.y - y) < 120)) { taken.push({ x, y, w: 160, h: 100 }); return { x, y }; }
+        }
+        return { x: 60, y: 60 };
+    }
+
+    function applyParsed(parsed) {
+        const idByName = new Map();
+        const placed = [];
+        const newNodes = parsed.nodes.map(pn => {
+            const ex = state.nodes.find(n => n.name === pn.name);
+            const id = ex ? ex.id : uid('n');
+            idByName.set(pn.name, id);
+            let pos;
+            if (ex) pos = { x: ex.x, y: ex.y }; else pos = nextFreePos(placed.concat(state.nodes));
+            placed.push({ x: pos.x, y: pos.y, w: 160, h: 100 });
+            return { id, x: pos.x, y: pos.y, name: pn.name, stereotype: pn.stereotype, attributes: pn.attributes, methods: pn.methods };
+        });
+        const newEdges = parsed.edges.filter(e => idByName.has(e.fromName) && idByName.has(e.toName))
+            .map(e => ({ id: uid('e'), from: idByName.get(e.fromName), to: idByName.get(e.toName), type: e.type, fromMult: e.fromMult || '', toMult: e.toMult || '', label: e.label || '' }));
+        state.nodes = newNodes; state.edges = newEdges;
+        if (selection && selection.kind === 'node' && !state.nodes.some(n => n.id === selection.id)) selection = null;
+        selNodes = new Set([...selNodes].filter(id => state.nodes.some(n => n.id === id)));
+        render(); renderPanel(); save();
+    }
+
+    function setDslStatus(ok, msg) {
+        const s = $('dslStatus');
+        s.className = 'dsl-status ' + (ok ? 'ok' : 'err');
+        s.textContent = msg || (ok ? 'OK' : 'エラー');
+    }
+    function syncTextFromDiagram() {
+        if (!drawerOpen || document.activeElement === dsl) return;
+        dsl.value = toDSL();
+        setDslStatus(true, 'OK');
+    }
+    let dslTimer;
+    dsl.addEventListener('focusin', () => { editBaseline = snap(); });
+    dsl.addEventListener('input', () => {
+        clearTimeout(dslTimer);
+        dslTimer = setTimeout(() => {
+            try {
+                const parsed = parseDSL(dsl.value);
+                applyParsed(parsed);
+                setDslStatus(true, `${parsed.nodes.length}クラス / ${parsed.edges.length}関連`);
+            } catch (err) { setDslStatus(false, '解析エラー'); }
+        }, 350);
+    });
+    dsl.addEventListener('change', () => { recordEdit(); save(); });
+    function toggleDrawer(force) {
+        drawerOpen = force === undefined ? !drawerOpen : force;
+        textDrawer.hidden = !drawerOpen;
+        $('textBtn').classList.toggle('toggle-on', drawerOpen);
+        if (drawerOpen) { dsl.value = toDSL(); setDslStatus(true, 'OK'); }
+        applyView();
+    }
+    $('textBtn').onclick = () => toggleDrawer();
+    $('textCloseBtn').onclick = () => toggleDrawer(false);
+    $('dslCopyBtn').onclick = async () => {
+        try { await navigator.clipboard.writeText(dsl.value); toast('テキストをコピーしました'); }
+        catch (_) { dsl.select(); document.execCommand('copy'); toast('テキストをコピーしました'); }
+    };
 
     /* ============================================================
      * Export (SVG / PNG) — 完全クライアントサイド
@@ -1000,11 +1386,21 @@ ${inner}
         '  ・選択ツールでクラスをドラッグして移動',
         '  ・右下のプロパティで名前・属性・操作・多重度を編集',
         '',
+        '【複数選択・整列】',
+        '  ・Shift+クリック で複数選択 / Shift+ドラッグ で範囲選択',
+        '  ・Ctrl/Cmd+A で全選択',
+        '  ・2件以上選択でプロパティに整列ボタン（左/中央/右/上下/等間隔）',
+        '  ・🧲 グリッド吸着、▦ 自動整列（継承の階層レイアウト）',
+        '',
+        '【テキスト双方向同期】',
+        '  ・</>テキスト でPlantUML風コードを表示',
+        '  ・図の編集→テキストに即反映、テキスト編集→図に反映',
+        '',
         '【ショートカット】',
         '  Delete / Backspace … 選択を削除',
         '  Ctrl/Cmd + Z … 元に戻す / Shift+Z でやり直し',
-        '  Shift + F … 全体表示',
-        '  V クラス追加=C 選択=ESC',
+        '  Ctrl/Cmd + D … 複製 / C コピー / V 貼り付け',
+        '  Shift + F … 全体表示 / C クラス追加 / V 選択 / ESC 選択へ',
         '  ホイール … 拡大縮小 / 空白ドラッグ … 画面移動',
         '',
         '【特長】',
@@ -1013,12 +1409,21 @@ ${inner}
         '  ・JSON 保存/読込・共有リンク・自動保存'
     ].join('\n'));
 
+    /* ---- snap / layout ---- */
+    $('snapBtn').onclick = () => { snapOn = !snapOn; $('snapBtn').classList.toggle('toggle-on', snapOn); toast('グリッド吸着: ' + (snapOn ? 'ON' : 'OFF')); };
+    $('layoutBtn').onclick = autoLayout;
+
     /* ---- keyboard ---- */
     document.addEventListener('keydown', e => {
         const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
+        const mod = e.ctrlKey || e.metaKey;
+        if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+        if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
         if (typing) return;
+        if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); duplicateSelection(); return; }
+        if (mod && e.key.toLowerCase() === 'c') { e.preventDefault(); copySelection(); return; }
+        if (mod && e.key.toLowerCase() === 'v') { e.preventDefault(); pasteClipboard(); return; }
+        if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); selNodes = new Set(state.nodes.map(n => n.id)); selection = state.nodes.length ? { kind: 'node', id: state.nodes[state.nodes.length - 1].id } : null; refreshSelectionStyles(); renderPanel(); return; }
         if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelection(); }
         else if (e.key === 'Escape') { setMode('select'); select(null); }
         else if (e.key === 'c' || e.key === 'C') setMode('class');
