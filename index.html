@@ -1604,8 +1604,8 @@
         history = []; future = [];
         buildPalette();
         buildTemplateOptions();
-        $('textBtn').disabled = (t !== 'class');
-        if (t !== 'class' && drawerOpen) toggleDrawer(false);
+        $('textBtn').disabled = !(t === 'class' || t === 'sequence');
+        if (!(t === 'class' || t === 'sequence') && drawerOpen) toggleDrawer(false);
         render(); renderPanel(); fitView(); save();
         $('diagramType').value = t;
     }
@@ -1746,14 +1746,95 @@
         render(); renderPanel(); save();
     }
 
+    /* ---- シーケンス図 DSL（PlantUML風） ---- */
+    function seqIdent(name) { return /^[A-Za-z_][\w]*$/.test(name) ? name : '"' + String(name).replace(/"/g, '') + '"'; }
+    function seqArrowOf(t) { return t === 'async' ? '->>' : t === 'reply' ? '-->' : '->'; }
+
+    function toSeqDSL() {
+        const ps = state.participants || [], msgs = state.messages || [], frags = state.fragments || [];
+        const pname = id => { const p = ps.find(o => o.id === id); return p ? p.name : id; };
+        const idx = id => msgs.findIndex(m => m.id === id);
+        const L = ['@startuml'];
+        ps.forEach((p, i) => L.push(`${p.kind === 'actor' ? 'actor' : 'participant'} ${seqIdent(p.name)} as p${i + 1}`));
+        if (ps.length && msgs.length) L.push('');
+        const opens = {}, closes = {}, elses = {};
+        for (const f of frags) {
+            let a = idx(f.from), b = idx(f.to); if (a < 0 || b < 0) continue; if (a > b) { const t = a; a = b; b = t; }
+            (opens[a] || (opens[a] = [])).push({ f, span: b - a }); (closes[b] || (closes[b] = [])).push({ f, span: b - a });
+            if (f.type === 'alt' && f.elseAfter) { const ei = idx(f.elseAfter); if (ei >= 0) (elses[ei] || (elses[ei] = [])).push(f); }
+        }
+        let depth = 0; const ind = () => '  '.repeat(depth);
+        msgs.forEach((m, i) => {
+            (opens[i] || []).sort((x, y) => y.span - x.span).forEach(({ f }) => { L.push(ind() + f.type + (f.label ? ' ' + f.label : '')); depth++; });
+            L.push(`${ind()}${seqIdent(pname(m.from))} ${seqArrowOf(m.type)} ${seqIdent(pname(m.to))}${m.text ? ' : ' + m.text : ''}`);
+            (elses[i] || []).forEach(f => { L.push('  '.repeat(Math.max(0, depth - 1)) + 'else' + (f.elseLabel ? ' ' + f.elseLabel : '')); });
+            (closes[i] || []).sort((x, y) => x.span - y.span).forEach(() => { depth--; L.push(ind() + 'end'); });
+        });
+        L.push('@enduml');
+        return L.join('\n');
+    }
+
+    const SEQ_MSG_RE = /^(?:"([^"]+)"|([^\s:]+))\s*(-->>|->>|-->|->|<<--|<--|<<-|<-)\s*(?:"([^"]+)"|([^\s:]+))\s*(?::\s*(.*))?$/;
+    const SEQ_DECL_RE = /^(participant|actor|boundary|control|entity|database|collections)\s+(?:"([^"]+)"|(\w+))(?:\s+as\s+(\w+))?\s*$/i;
+    const SEQ_FRAG_RE = /^(alt|opt|loop|par|break|critical|group)\b\s*(.*)$/i;
+
+    function parseSeqDSL(src) {
+        const ps = [], pmap = new Map(), msgs = [], frags = [], stack = [];
+        let lastMsgId = null;
+        const ensure = key => {
+            if (pmap.has(key)) return pmap.get(key);
+            const p = { id: uid('p'), kind: 'participant', name: key }; ps.push(p); pmap.set(key, p); return p;
+        };
+        for (const raw of src.split('\n')) {
+            const line = raw.trim();
+            if (!line || /^@(start|end)uml/i.test(line) || line.startsWith("'")) continue;
+            const dm = line.match(SEQ_DECL_RE);
+            if (dm) {
+                const name = dm[2] || dm[3], alias = dm[4];
+                const p = { id: uid('p'), kind: /actor/i.test(dm[1]) ? 'actor' : 'participant', name };
+                ps.push(p); pmap.set(name, p); if (alias) pmap.set(alias, p);
+                continue;
+            }
+            const fo = line.match(SEQ_FRAG_RE);
+            if (fo) { const ty = fo[1].toLowerCase(); stack.push({ type: ty === 'group' ? 'opt' : ty, label: fo[2].trim(), from: null, elseAfter: '', elseLabel: '' }); continue; }
+            const em = line.match(/^else\b\s*(.*)$/i);
+            if (em) { const top = stack[stack.length - 1]; if (top) { top.elseAfter = lastMsgId; top.elseLabel = em[1].trim(); } continue; }
+            if (/^end\b/i.test(line)) { const top = stack.pop(); if (top && top.from) frags.push({ id: uid('f'), type: top.type, label: top.label, from: top.from, to: lastMsgId, elseAfter: top.elseAfter, elseLabel: top.elseLabel }); continue; }
+            if (/^note\b/i.test(line)) continue;            // ノートは保持・対象外
+            const mm = line.match(SEQ_MSG_RE);
+            if (mm) {
+                const op = mm[3], reverse = op[0] === '<';
+                const a = reverse ? (mm[4] || mm[5]) : (mm[1] || mm[2]);
+                const b = reverse ? (mm[1] || mm[2]) : (mm[4] || mm[5]);
+                const type = /--/.test(op) ? 'reply' : />>|<</.test(op) ? 'async' : 'sync';
+                const pa = ensure(a), pb = ensure(b);
+                const m = { id: uid('m'), from: pa.id, to: pb.id, type, text: (mm[6] || '').trim() };
+                msgs.push(m); lastMsgId = m.id;
+                for (const fr of stack) if (!fr.from) fr.from = m.id;
+            }
+        }
+        return { participants: ps, messages: msgs, fragments: frags };
+    }
+
+    function applySeqParsed(parsed) {
+        state.participants = parsed.participants;
+        state.messages = parsed.messages;
+        state.fragments = parsed.fragments;
+        // state.notes は維持
+        selection = null;
+        render(); renderPanel(); save();
+    }
+
     function setDslStatus(ok, msg) {
         const s = $('dslStatus');
         s.className = 'dsl-status ' + (ok ? 'ok' : 'err');
         s.textContent = msg || (ok ? 'OK' : 'エラー');
     }
+    function textCapable() { return diagramType() === 'class' || isSeq(); }
+    function currentDSL() { return isSeq() ? toSeqDSL() : toDSL(); }
     function syncTextFromDiagram() {
-        if (!drawerOpen || diagramType() !== 'class' || document.activeElement === dsl) return;
-        dsl.value = toDSL();
+        if (!drawerOpen || !textCapable() || document.activeElement === dsl) return;
+        dsl.value = currentDSL();
         setDslStatus(true, 'OK');
     }
     let dslTimer;
@@ -1762,9 +1843,15 @@
         clearTimeout(dslTimer);
         dslTimer = setTimeout(() => {
             try {
-                const parsed = parseDSL(dsl.value);
-                applyParsed(parsed);
-                setDslStatus(true, `${parsed.nodes.length}クラス / ${parsed.edges.length}関連`);
+                if (isSeq()) {
+                    const parsed = parseSeqDSL(dsl.value);
+                    applySeqParsed(parsed);
+                    setDslStatus(true, `${parsed.participants.length}ライフライン / ${parsed.messages.length}メッセージ`);
+                } else {
+                    const parsed = parseDSL(dsl.value);
+                    applyParsed(parsed);
+                    setDslStatus(true, `${parsed.nodes.length}クラス / ${parsed.edges.length}関連`);
+                }
             } catch (err) { setDslStatus(false, '解析エラー'); }
         }, 350);
     });
@@ -1773,10 +1860,10 @@
         drawerOpen = force === undefined ? !drawerOpen : force;
         textDrawer.hidden = !drawerOpen;
         $('textBtn').classList.toggle('toggle-on', drawerOpen);
-        if (drawerOpen) { dsl.value = toDSL(); setDslStatus(true, 'OK'); }
+        if (drawerOpen) { dsl.value = currentDSL(); setDslStatus(true, 'OK'); }
         applyView();
     }
-    $('textBtn').onclick = () => { if (diagramType() !== 'class') return toast('テキスト同期はクラス図のみ対応です', true); toggleDrawer(); };
+    $('textBtn').onclick = () => { if (!textCapable()) return toast('テキスト同期はクラス図・シーケンス図に対応', true); toggleDrawer(); };
     $('textCloseBtn').onclick = () => toggleDrawer(false);
     $('dslCopyBtn').onclick = async () => {
         try { await navigator.clipboard.writeText(dsl.value); toast('テキストをコピーしました'); }
@@ -1916,8 +2003,8 @@ ${inner}
             project.diagrams[project.type] = state;
             project.type = t; history = []; future = [];
             buildPalette(); buildTemplateOptions();
-            $('textBtn').disabled = (t !== 'class');
-            if (t !== 'class' && drawerOpen) toggleDrawer(false);
+            $('textBtn').disabled = !(t === 'class' || t === 'sequence');
+            if (!(t === 'class' || t === 'sequence') && drawerOpen) toggleDrawer(false);
             $('diagramType').value = t;
         } else { commit(); }
         const nd = (t === 'sequence')
@@ -2084,9 +2171,10 @@ ${inner}
         '  ・2件以上選択でプロパティに整列ボタン（左/中央/右/上下/等間隔）',
         '  ・🧲 グリッド吸着、▦ 自動整列（継承の階層レイアウト）',
         '',
-        '【テキスト双方向同期】',
+        '【テキスト双方向同期（クラス図・シーケンス図）】',
         '  ・</>テキスト でPlantUML風コードを表示',
         '  ・図の編集→テキストに即反映、テキスト編集→図に反映',
+        '  ・シーケンスは A -> B : msg / alt…else…end / loop / opt 等',
         '',
         '【ショートカット】',
         '  Delete / Backspace … 選択を削除',
@@ -2174,7 +2262,7 @@ ${inner}
         recomputeSeq();
 
         $('diagramType').value = project.type;
-        $('textBtn').disabled = (project.type !== 'class');
+        $('textBtn').disabled = !(project.type === 'class' || project.type === 'sequence');
         buildPalette();
         buildTemplateOptions();
         render(); renderPanel(); fitView();
