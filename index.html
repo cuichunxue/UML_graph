@@ -266,6 +266,7 @@
         .node.multi .note-rect { stroke: var(--sel); stroke-dasharray: 5 3; }
         .seq-note { cursor: grab; }
         .note-anchor { stroke: var(--node-stroke); stroke-width: 1; stroke-dasharray: 4 3; fill: none; opacity: .75; }
+        .label-hit { fill: transparent; cursor: move; }
         /* 入れ子コンテナ（複合状態 / パッケージ） */
         .container-body { fill: none; stroke: var(--node-stroke); stroke-width: 1.3; }
         .container-head { fill: var(--node-head); stroke: none; cursor: grab; }
@@ -362,6 +363,7 @@
                         <button class="zbtn" id="zoomFit" title="全体表示 (Shift+F)" aria-label="全体表示">⤢</button>
                     </div>
                     <button class="btn icon-only" id="snapBtn" title="グリッド吸着 ON/OFF" aria-label="グリッド吸着"><span class="ico">🧲</span></button>
+                    <button class="btn icon-only" id="orthoBtn" title="直交配線 ON/OFF" aria-label="直交配線"><span class="ico">⌐</span></button>
                     <button class="btn icon-only" id="layoutBtn" title="自動整列" aria-label="自動整列"><span class="ico">▦</span></button>
                 </div>
                 <div class="toolbar-group">
@@ -499,6 +501,7 @@
     let state = project.diagrams.class;   // アクティブなダイアグラム
     function diagramType() { return project.type; }
     function isSeq() { return project.type === 'sequence'; }
+    function ortho() { return !!project.ortho; }
     let selection = null;          // {kind:'node'|'edge', id}  ← プロパティ表示用の主選択
     let selNodes = new Set();      // 複数選択中のノードid
     let clipboard = null;          // コピーしたノード群
@@ -720,38 +723,67 @@
         return g;
     }
 
+    function routeEdge(a, b) {
+        const ca = center(a), cb = center(b);
+        if (!ortho()) { return [borderPoint(a, cb), borderPoint(b, ca)]; }
+        const dx = cb.x - ca.x, dy = cb.y - ca.y;
+        if (Math.abs(dx) >= Math.abs(dy)) {
+            const s = dx >= 0 ? 1 : -1;
+            const pA = { x: ca.x + s * a.w / 2, y: ca.y }, pB = { x: cb.x - s * b.w / 2, y: cb.y };
+            const mx = (pA.x + pB.x) / 2;
+            return [pA, { x: mx, y: pA.y }, { x: mx, y: pB.y }, pB];
+        } else {
+            const s = dy >= 0 ? 1 : -1;
+            const pA = { x: ca.x, y: ca.y + s * a.h / 2 }, pB = { x: cb.x, y: cb.y - s * b.h / 2 };
+            const my = (pA.y + pB.y) / 2;
+            return [pA, { x: pA.x, y: my }, { x: pB.x, y: my }, pB];
+        }
+    }
+    const ptStr = p => `${p.x},${p.y}`;
+
     function drawEdge(e) {
         const a = nodeById(e.from), b = nodeById(e.to);
         if (!a || !b) return null;
         const r = REL[e.type] || REL.association;
         if (e.from === e.to) return drawSelfEdge(e, a, r);
-        let pA = borderPoint(a, center(b));
-        let pB = borderPoint(b, center(a));
-        const dirEnd = unit(sub(pB, pA));     // points toward B
-        const dirStart = mul(dirEnd, -1);     // points toward A
-        // shorten line so triangle/diamond don't overlap
-        const startShorten = (r.start === 'diamond' || r.start === 'diamondFilled') ? 16 : 0;
-        const endShorten = (r.end === 'triangle') ? 14 : 0;
-        const lA = add(pA, mul(dirEnd, startShorten));
-        const lB = add(pB, mul(dirStart, endShorten));
+        const pts = routeEdge(a, b);
+        const pA = pts[0], pB = pts[pts.length - 1];
+        const endDir = unit(sub(pB, pts[pts.length - 2]));
+        const startDir = unit(sub(pA, pts[1]));
+        // 三角/菱形のぶん端点を内側へ
+        const lpts = pts.map(p => ({ x: p.x, y: p.y }));
+        if (r.end === 'triangle') { const i = lpts.length - 1; lpts[i] = sub(lpts[i], mul(endDir, 14)); }
+        if (r.start === 'diamond' || r.start === 'diamondFilled') lpts[0] = sub(lpts[0], mul(startDir, 16));
 
         const g = el('g', { class: 'edge' + (isSel('edge', e.id) ? ' selected' : '') });
         g.dataset.edge = e.id;
-        g.append(el('line', { class: 'edge-hit', x1: pA.x, y1: pA.y, x2: pB.x, y2: pB.y }));
-        const line = el('line', { class: 'edge-line', x1: lA.x, y1: lA.y, x2: lB.x, y2: lB.y });
+        g.append(el('polyline', { class: 'edge-hit', points: pts.map(ptStr).join(' '), fill: 'none' }));
+        const line = el('polyline', { class: 'edge-line', points: lpts.map(ptStr).join(' '), fill: 'none' });
         if (r.dash) line.setAttribute('stroke-dasharray', '7 5');
         g.append(line);
 
-        if (r.end !== 'none') g.append(marker(pB, dirEnd, r.end));
-        if (r.start !== 'none') g.append(marker(pA, dirStart, r.start));
+        if (r.end !== 'none') g.append(marker(pB, endDir, r.end));
+        if (r.start !== 'none') g.append(marker(pA, startDir, r.start));
 
-        // labels
-        if (e.fromMult) g.append(edgeLabel(offsetLabel(pA, dirEnd, 16), e.fromMult));
-        if (e.toMult) g.append(edgeLabel(offsetLabel(pB, dirStart, 16), e.toMult));
+        // 多重度（端に固定）
+        if (e.fromMult) g.append(edgeLabel(offsetLabel(pA, mul(startDir, -1), 16), e.fromMult));
+        if (e.toMult) g.append(edgeLabel(offsetLabel(pB, mul(endDir, -1), 16), e.toMult));
+        // 本体ラベル（ドラッグ移動可。中央セグメント中点が基準）
         if (e.label) {
-            const mid = { x: (pA.x + pB.x) / 2, y: (pA.y + pB.y) / 2 };
-            g.append(edgeLabel({ x: mid.x, y: mid.y - 6 }, e.label, true));
+            const mi = Math.floor((pts.length - 1) / 2);
+            const base = { x: (pts[mi].x + pts[mi + 1].x) / 2, y: (pts[mi].y + pts[mi + 1].y) / 2 - 6 };
+            g.append(labelGroup(e, base.x + (e.labelDx || 0), base.y + (e.labelDy || 0)));
         }
+        return g;
+    }
+
+    function labelGroup(e, x, y) {
+        const g = el('g');
+        g.dataset.label = e.id;
+        const w = measure(e.label, "12px " + FONT) + 6;
+        g.append(el('rect', { class: 'edge-label-bg', x: x - w / 2, y: y - 11, width: w, height: 14, rx: 2 }));
+        g.append(text(x, y, e.label, 'edge-label', 'middle'));
+        g.append(el('rect', { class: 'label-hit', x: x - w / 2, y: y - 11, width: w, height: 15 }));
         return g;
     }
 
@@ -1110,6 +1142,16 @@
         }
 
         // select mode
+        const labelEl = e.target.closest('[data-label]');
+        if (labelEl && !nodeEl) {                   // ラベルのドラッグ移動
+            const ed = edgeById(labelEl.dataset.label);
+            if (ed) {
+                select('edge', ed.id);
+                drag = { kind: 'label', id: ed.id, ox: pt.x, oy: pt.y, bx: ed.labelDx || 0, by: ed.labelDy || 0, moved: false };
+                canvas.setPointerCapture(e.pointerId);
+            }
+            return;
+        }
         if (nodeEl) {
             const id = nodeEl.dataset.node;
             if (e.shiftKey) {                       // 複数選択トグル
@@ -1158,6 +1200,10 @@
             for (const id of drag.ids) { const nn = nodeById(id), s = drag.start[id]; nn.x = snapv(s.x + dx); nn.y = snapv(s.y + dy); }
             drag.moved = true;
             scheduleRender();
+        } else if (drag.kind === 'label') {
+            const pt = toDiagram(e.clientX, e.clientY);
+            const ed = edgeById(drag.id);
+            if (ed) { ed.labelDx = Math.round(drag.bx + (pt.x - drag.ox)); ed.labelDy = Math.round(drag.by + (pt.y - drag.oy)); drag.moved = true; scheduleRender(); }
         } else if (drag.kind === 'edge') {
             const pt = toDiagram(e.clientX, e.clientY);
             drag.temp.setAttribute('x2', pt.x); drag.temp.setAttribute('y2', pt.y);
@@ -1180,6 +1226,8 @@
             if (targetNode && targetNode.dataset.node !== drag.from) {
                 createEdge(drag.from, targetNode.dataset.node, drag.rel);
             }
+        } else if (drag.kind === 'label' && drag.moved) {
+            commit(); save();
         } else if (drag.kind === 'node' && drag.moved) {
             // ドロップ位置でコンテナへの所属を更新（掴んだノードのみ）
             let changed = false;
@@ -2264,7 +2312,7 @@
         .frag-tab{fill:${NH};stroke:${NS};stroke-width:1.2}
         .frag-tab-text{fill:${MU};font:600 11px ${FONT}}
         .frag-else{stroke:${NS};stroke-width:1;stroke-dasharray:6 4}
-        .edge-hit,.temp-line,.marquee,.seq-hit{display:none}`;
+        .edge-hit,.temp-line,.marquee,.seq-hit,.label-hit{display:none}`;
     }
     function buildSVG() {
         if (isSeq()) renderSequence(); else { state.nodes.forEach(layoutNode); layoutContainers(); }
@@ -2526,7 +2574,8 @@ ${inner}
         '  ・Shift+クリック で複数選択 / Shift+ドラッグ で範囲選択',
         '  ・Ctrl/Cmd+A で全選択',
         '  ・2件以上選択でプロパティに整列ボタン（左/中央/右/上下/等間隔）',
-        '  ・🧲 グリッド吸着、▦ 自動整列（継承の階層レイアウト）',
+        '  ・🧲 グリッド吸着、⌐ 直交配線、▦ 自動整列',
+        '  ・関連線のラベルはドラッグで自由に移動できます',
         '',
         '【テキスト双方向同期（全5図種）】',
         '  ・</>テキスト でPlantUML風コードを表示（図⇄テキスト即時反映）',
@@ -2550,6 +2599,7 @@ ${inner}
 
     /* ---- snap / layout ---- */
     $('snapBtn').onclick = () => { snapOn = !snapOn; $('snapBtn').classList.toggle('toggle-on', snapOn); toast('グリッド吸着: ' + (snapOn ? 'ON' : 'OFF')); };
+    $('orthoBtn').onclick = () => { project.ortho = !project.ortho; $('orthoBtn').classList.toggle('toggle-on', project.ortho); render(); save(); toast('直交配線: ' + (project.ortho ? 'ON' : 'OFF')); };
     $('layoutBtn').onclick = autoLayout;
 
     /* ---- keyboard ---- */
@@ -2609,7 +2659,7 @@ ${inner}
         try { const s = localStorage.getItem(LS_KEY); if (s) stored = JSON.parse(s); } catch (_) {}
 
         if (stored && stored.diagrams && stored.type) {                 // 新形式（プロジェクト）
-            project = { type: DIAGRAMS[stored.type] ? stored.type : 'class', diagrams: {} };
+            project = { type: DIAGRAMS[stored.type] ? stored.type : 'class', ortho: !!stored.ortho, diagrams: {} };
             for (const t in DIAGRAMS) project.diagrams[t] = validDiagram(t, stored.diagrams[t]) ? stored.diagrams[t] : emptyDiagramFor(t);
         } else if (stored && Array.isArray(stored.nodes)) {             // 旧形式（単一クラス図）→移行
             for (const t in DIAGRAMS) project.diagrams[t] = emptyDiagramFor(t);
@@ -2622,6 +2672,7 @@ ${inner}
 
         $('diagramType').value = project.type;
         $('textBtn').disabled = !canText(project.type);
+        $('orthoBtn').classList.toggle('toggle-on', !!project.ortho);
         buildPalette();
         buildTemplateOptions();
         render(); renderPanel(); fitView();
