@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="ブラウザだけで動くPlantUML（UML）図エディタ。クラス図・シーケンス図・ユースケース図・アクティビティ図などをリアルタイムにプレビューし、SVG/PNGで書き出せます。">
+    <meta name="description" content="完全オフラインで動くインタラクティブUMLクラス図エディタ。クラスをドラッグで配置・接続し、SVG/PNGで書き出せます。サーバー不要・依存ライブラリ不要。">
     <meta name="color-scheme" content="light dark">
-    <title>UML図エディタ (PlantUML)</title>
+    <title>UMLクラス図エディタ</title>
     <style>
         :root {
             --bg: #f4f5f7;
@@ -19,10 +19,17 @@
             --accent: #2563eb;
             --accent-hover: #1d4ed8;
             --accent-soft: #eff4ff;
-            --error-bg: #fef2f2; --error-fg: #b42318; --error-bd: #fecaca;
-            --success-bg: #ecfdf3; --success-fg: #067647; --success-bd: #abefc6;
-            --warn-bg: #fffaeb; --warn-fg: #b54708; --warn-bd: #fedf89;
+            --error-fg: #b42318;
+            --success-fg: #067647;
             --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.04);
+            /* diagram */
+            --node-fill: #ffffff;
+            --node-stroke: #334155;
+            --node-head: #f1f5f9;
+            --line: #475569;
+            --muted: #64748b;
+            --sel: #2563eb;
+            --canvas-bg: #f8fafc;
         }
         [data-theme="dark"] {
             --bg: #0d1117;
@@ -36,91 +43,75 @@
             --accent: #2f81f7;
             --accent-hover: #4493f8;
             --accent-soft: #1c2a3f;
-            --error-bg: #2c1618; --error-fg: #ff7b72; --error-bd: #5c2326;
-            --success-bg: #11261b; --success-fg: #57ab5a; --success-bd: #245430;
-            --warn-bg: #2b2111; --warn-fg: #e3b341; --warn-bd: #5c4413;
+            --error-fg: #ff7b72;
+            --success-fg: #57ab5a;
             --shadow: 0 1px 3px rgba(0,0,0,.4);
+            --node-fill: #1c2431;
+            --node-stroke: #8696a7;
+            --node-head: #232c3a;
+            --line: #9aa7b5;
+            --muted: #8b98a6;
+            --sel: #4493f8;
+            --canvas-bg: #0e131a;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
-
         html, body { height: 100%; }
-
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', Roboto, sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
+            background: var(--bg); color: var(--text);
+            display: flex; flex-direction: column; overflow: hidden;
         }
 
         /* ---------- Header ---------- */
         .header {
-            background: var(--panel);
-            border-bottom: 1px solid var(--border);
-            padding: 0 16px;
-            height: 52px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex: none;
-            z-index: 10;
+            background: var(--panel); border-bottom: 1px solid var(--border);
+            padding: 0 16px; height: 52px; display: flex; align-items: center;
+            justify-content: space-between; flex: none; z-index: 10;
         }
         .brand { display: flex; align-items: center; gap: 10px; }
         .brand .logo {
-            width: 26px; height: 26px; border-radius: 6px;
+            width: 28px; height: 28px; border-radius: 6px;
             background: linear-gradient(135deg, #2563eb, #7c3aed);
             display: flex; align-items: center; justify-content: center;
-            color: #fff; font-size: 13px; font-weight: 700;
+            color: #fff; font-size: 12px; font-weight: 700; letter-spacing: -.02em;
         }
         .brand h1 { font-size: 1.02rem; font-weight: 650; letter-spacing: -.01em; }
         .header-right { display: flex; align-items: center; gap: 10px; }
         .status-pill {
-            display: inline-flex; align-items: center; gap: 6px;
-            font-size: .74rem; color: var(--text-faint);
-            padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border);
-            white-space: nowrap;
+            display: inline-flex; align-items: center; gap: 6px; font-size: .74rem;
+            color: var(--text-faint); padding: 4px 10px; border-radius: 999px;
+            border: 1px solid var(--border); white-space: nowrap; max-width: 46vw; overflow: hidden; text-overflow: ellipsis;
         }
-        .status-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); }
+        .status-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); flex: none; }
         .status-pill.ok .dot { background: var(--success-fg); }
-        .status-pill.bad .dot { background: var(--error-fg); }
         .saved-badge { font-size: .72rem; color: var(--text-faint); opacity: 0; transition: opacity .25s; }
         .saved-badge.show { opacity: 1; }
 
         /* ---------- Layout ---------- */
         .main { flex: 1; display: flex; min-height: 0; }
-        .editor-section, .preview-section { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-        .editor-section { flex: 0 0 46%; background: var(--panel); border-right: 1px solid var(--border); }
-        .preview-section { flex: 1; background: var(--panel-2); }
+        .side, .canvas-section { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+        .side { flex: 0 0 290px; background: var(--panel); border-right: 1px solid var(--border); }
+        .canvas-section { flex: 1; background: var(--panel-2); }
 
-        .divider {
-            flex: none; width: 6px; cursor: col-resize; background: transparent;
-            position: relative; z-index: 5;
-        }
-        .divider::after {
-            content: ''; position: absolute; inset: 0 2px; border-radius: 3px;
-            background: var(--border); transition: background .15s;
-        }
+        .divider { flex: none; width: 6px; cursor: col-resize; background: transparent; position: relative; z-index: 5; }
+        .divider::after { content: ''; position: absolute; inset: 0 2px; border-radius: 3px; background: var(--border); transition: background .15s; }
         .divider:hover::after, .divider.active::after { background: var(--accent); }
 
         /* ---------- Toolbars ---------- */
         .toolbar {
-            padding: 8px 12px;
-            border-bottom: 1px solid var(--border);
+            padding: 8px 12px; border-bottom: 1px solid var(--border);
             display: flex; align-items: center; justify-content: space-between;
             gap: 8px; flex-wrap: wrap; background: var(--panel); flex: none;
         }
-        .preview-section .toolbar { background: var(--panel-2); }
+        .canvas-section .toolbar { background: var(--panel-2); }
         .toolbar-label { font-size: .82rem; font-weight: 600; color: var(--text-soft); white-space: nowrap; }
         .toolbar-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
         .btn {
-            display: inline-flex; align-items: center; gap: 5px;
-            padding: 6px 11px; border: 1px solid var(--border-strong);
-            border-radius: 6px; background: var(--panel);
-            font-size: .8rem; font-weight: 500; color: var(--text);
-            cursor: pointer; white-space: nowrap;
+            display: inline-flex; align-items: center; gap: 5px; padding: 6px 11px;
+            border: 1px solid var(--border-strong); border-radius: 6px; background: var(--panel);
+            font-size: .8rem; font-weight: 500; color: var(--text); cursor: pointer; white-space: nowrap;
             transition: background .12s, border-color .12s, color .12s, opacity .12s;
         }
         .btn:hover { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
@@ -132,98 +123,108 @@
         .btn .ico { font-size: .95em; line-height: 1; }
         .btn.icon-only { padding: 6px 8px; }
 
-        select.control {
-            padding: 6px 9px; border: 1px solid var(--border-strong); border-radius: 6px;
-            background: var(--panel); color: var(--text); font-size: .8rem; cursor: pointer;
-            max-width: 180px;
+        /* ---------- Palette ---------- */
+        .side-scroll { flex: 1; overflow-y: auto; min-height: 0; }
+        .palette { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+        .palette h3 { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); margin-bottom: 8px; font-weight: 700; }
+        .tool-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+        .tool {
+            display: flex; align-items: center; gap: 7px; padding: 7px 9px; border: 1px solid var(--border-strong);
+            border-radius: 6px; background: var(--panel); font-size: .78rem; color: var(--text); cursor: pointer;
+            transition: all .12s; text-align: left; width: 100%;
         }
+        .tool:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+        .tool.active { border-color: var(--accent); background: var(--accent); color: #fff; }
+        .tool .gly { width: 26px; height: 16px; flex: none; }
+        .tool .gly svg { width: 100%; height: 100%; display: block; }
+        .tool.active .gly svg * { stroke: #fff !important; fill: #fff !important; }
+        .tool.active .gly svg .hollow { fill: var(--accent) !important; }
+
+        /* ---------- Properties ---------- */
+        .props { padding: 12px; }
+        .props h3 { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--text-faint); margin-bottom: 10px; font-weight: 700; }
+        .field { margin-bottom: 11px; }
+        .field label { display: block; font-size: .72rem; color: var(--text-soft); margin-bottom: 4px; font-weight: 600; }
+        .field input, .field select, .field textarea {
+            width: 100%; padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: 6px;
+            background: var(--panel-2); color: var(--text); font-size: .82rem; font-family: inherit;
+        }
+        .field textarea { resize: vertical; min-height: 64px; line-height: 1.5;
+            font-family: 'SF Mono','JetBrains Mono','Consolas',monospace; font-size: .78rem; }
+        .field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--accent); }
+        .field .hint { font-size: .68rem; color: var(--text-faint); margin-top: 3px; }
+        .empty-hint { font-size: .8rem; color: var(--text-faint); line-height: 1.7; }
+        .empty-hint kbd {
+            font-family: monospace; font-size: .72rem; background: var(--panel-2);
+            border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px;
+        }
+        .danger { color: var(--error-fg); border-color: var(--error-fg) !important; }
+        .danger:hover { background: var(--error-fg) !important; color: #fff !important; border-color: var(--error-fg) !important; }
+
+        .side-status {
+            flex: none; height: 30px; border-top: 1px solid var(--border); display: flex; align-items: center;
+            gap: 12px; padding: 0 14px; font-size: .72rem; color: var(--text-faint); background: var(--panel-2);
+        }
+        .side-status .sep { flex: 1; }
 
         /* zoom group */
         .zoom-group { display: inline-flex; align-items: center; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; }
         .zoom-group .zbtn {
             width: 30px; height: 30px; border: none; background: var(--panel); color: var(--text-soft);
-            cursor: pointer; font-size: 1rem; display: flex; align-items: center; justify-content: center;
-            border-right: 1px solid var(--border);
+            cursor: pointer; font-size: 1rem; display: flex; align-items: center; justify-content: center; border-right: 1px solid var(--border);
         }
         .zoom-group .zbtn:last-child { border-right: none; }
         .zoom-group .zbtn:hover { background: var(--accent-soft); color: var(--accent); }
-        .zoom-level {
-            min-width: 52px; text-align: center; font-size: .76rem; color: var(--text-soft);
-            font-variant-numeric: tabular-nums; user-select: none; border-right: 1px solid var(--border);
-            line-height: 30px; cursor: default;
-        }
+        .zoom-level { min-width: 52px; text-align: center; font-size: .76rem; color: var(--text-soft);
+            font-variant-numeric: tabular-nums; user-select: none; border-right: 1px solid var(--border); line-height: 30px; }
 
-        /* ---------- Editor ---------- */
-        .editor-wrap { flex: 1; position: relative; min-height: 0; display: flex; }
-        textarea#code {
-            flex: 1; width: 100%; padding: 14px 16px; border: none; outline: none; resize: none;
-            font-family: 'SF Mono', 'JetBrains Mono', 'Consolas', 'Monaco', monospace;
-            font-size: 13.5px; line-height: 1.6; tab-size: 4;
-            background: var(--panel); color: var(--text);
-        }
-        textarea#code::placeholder { color: var(--text-faint); }
+        /* ---------- Canvas ---------- */
+        .canvas-area { flex: 1; position: relative; overflow: hidden; min-height: 0;
+            background: var(--canvas-bg) radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0) 0 0 / 22px 22px; }
+        #canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
+        #canvas.mode-select .node:hover .node-rect { stroke: var(--accent); }
+        #canvas.mode-rel { cursor: crosshair; }
+        #canvas.mode-class { cursor: copy; }
+        .node { cursor: grab; }
+        .node-rect { fill: var(--node-fill); stroke: var(--node-stroke); stroke-width: 1.2; }
+        .node-head { fill: var(--node-head); }
+        .compartment-sep { stroke: var(--node-stroke); stroke-width: 1; }
+        .node-name { fill: var(--text); font: 600 14px -apple-system,'Segoe UI','Noto Sans JP',sans-serif; }
+        .node-stereo { fill: var(--muted); font: italic 12px -apple-system,'Segoe UI','Noto Sans JP',sans-serif; }
+        .node-member { fill: var(--text); font: 13px 'SF Mono','Consolas',monospace; }
+        .node.selected .node-rect { stroke: var(--sel); stroke-width: 2.2; }
+        .edge-line { stroke: var(--line); fill: none; stroke-width: 1.4; }
+        .edge-hit { stroke: transparent; fill: none; stroke-width: 12; cursor: pointer; }
+        .marker-hollow { fill: var(--node-fill); stroke: var(--line); stroke-width: 1.4; }
+        .marker-filled { fill: var(--line); stroke: var(--line); stroke-width: 1.4; }
+        .marker-open { fill: none; stroke: var(--line); stroke-width: 1.4; }
+        .edge-label { fill: var(--text); font: 12px -apple-system,'Segoe UI',sans-serif; }
+        .edge-label-bg { fill: var(--canvas-bg); opacity: .85; }
+        .edge.selected .edge-line { stroke: var(--sel); stroke-width: 2.4; }
+        .edge.selected .marker-hollow, .edge.selected .marker-open { stroke: var(--sel); }
+        .edge.selected .marker-filled { fill: var(--sel); stroke: var(--sel); }
+        .temp-line { stroke: var(--accent); stroke-width: 1.6; stroke-dasharray: 5 4; fill: none; }
 
-        .editor-status {
-            flex: none; height: 30px; border-top: 1px solid var(--border);
-            display: flex; align-items: center; gap: 14px; padding: 0 14px;
-            font-size: .72rem; color: var(--text-faint); background: var(--panel-2);
-        }
-        .editor-status .sep { flex: 1; }
-
-        /* ---------- Messages ---------- */
-        .msg { padding: 9px 14px; font-size: .8rem; line-height: 1.45; display: none; flex: none; white-space: pre-wrap; border-bottom: 1px solid transparent; }
-        .msg.show { display: block; }
-        .msg.error { background: var(--error-bg); color: var(--error-fg); border-bottom-color: var(--error-bd); font-family: 'SF Mono','Consolas',monospace; }
-        .msg.success { background: var(--success-bg); color: var(--success-fg); border-bottom-color: var(--success-bd); }
-        .msg.warning { background: var(--warn-bg); color: var(--warn-fg); border-bottom-color: var(--warn-bd); }
-
-        /* ---------- Toast ---------- */
-        .toast-host { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
-        .toast {
-            background: var(--text); color: var(--panel); padding: 9px 16px; border-radius: 8px;
-            font-size: .82rem; box-shadow: var(--shadow); opacity: 0; transform: translateY(8px);
-            transition: opacity .2s, transform .2s; max-width: 90vw;
-        }
-        .toast.show { opacity: .96; transform: translateY(0); }
-        .toast.err { background: var(--error-fg); color: #fff; }
-
-        /* ---------- Preview viewport ---------- */
-        .preview-area { flex: 1; position: relative; overflow: hidden; min-height: 0; background:
-            radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0) 0 0 / 22px 22px; }
-        .viewport { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
-        .viewport.grabbable { cursor: grab; }
-        .viewport.grabbing { cursor: grabbing; }
-        #umlOutput {
-            background: #ffffff; border: 1px solid var(--border); border-radius: 8px;
-            padding: 18px; box-shadow: var(--shadow); display: inline-block; line-height: 0;
-        }
-        #umlOutput svg, #umlOutput img { display: block; }
-        .preview-empty {
+        .canvas-empty {
             position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
             color: var(--text-faint); font-size: .9rem; text-align: center; padding: 24px; pointer-events: none;
         }
-        .spinner {
-            position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
-            display: none; align-items: center; gap: 8px; background: var(--panel);
-            border: 1px solid var(--border); border-radius: 999px; padding: 5px 14px;
-            font-size: .76rem; color: var(--text-soft); box-shadow: var(--shadow); z-index: 4;
-        }
-        .spinner.show { display: flex; }
-        .spinner i { width: 12px; height: 12px; border: 2px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; }
-        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ---------- Toast ---------- */
+        .toast-host { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
+        .toast { background: var(--text); color: var(--panel); padding: 9px 16px; border-radius: 8px; font-size: .82rem;
+            box-shadow: var(--shadow); opacity: 0; transform: translateY(8px); transition: opacity .2s, transform .2s; max-width: 90vw; }
+        .toast.show { opacity: .96; transform: translateY(0); }
+        .toast.err { background: var(--error-fg); color: #fff; }
 
         .hidden { display: none !important; }
 
-        /* ---------- Responsive ---------- */
-        @media (max-width: 860px) {
+        @media (max-width: 820px) {
             .main { flex-direction: column; }
-            .editor-section { flex: 0 0 auto; height: 45vh; border-right: none; border-bottom: 1px solid var(--border); }
-            .preview-section { flex: 1; }
+            .side { flex: 0 0 auto; height: 42vh; border-right: none; border-bottom: 1px solid var(--border); }
+            .canvas-section { flex: 1; }
             .divider { display: none; }
             .header-right .status-pill { display: none; }
-        }
-        @media (max-width: 520px) {
-            .toolbar-label { display: none; }
         }
     </style>
 </head>
@@ -231,50 +232,55 @@
     <header class="header">
         <div class="brand">
             <span class="logo" aria-hidden="true">UML</span>
-            <h1>UML図エディタ</h1>
+            <h1>UMLクラス図エディタ</h1>
         </div>
         <div class="header-right">
             <span class="status-pill" id="statusPill"><span class="dot"></span><span id="statusText">準備中…</span></span>
             <span class="saved-badge" id="savedBadge">保存しました</span>
+            <button class="btn icon-only" id="undoBtn" title="元に戻す (Ctrl/Cmd+Z)" aria-label="元に戻す"><span class="ico">↶</span></button>
+            <button class="btn icon-only" id="redoBtn" title="やり直し (Ctrl/Cmd+Shift+Z)" aria-label="やり直し"><span class="ico">↷</span></button>
             <button class="btn icon-only" id="themeBtn" title="ライト/ダーク切替" aria-label="テーマ切替"><span class="ico" id="themeIco">🌙</span></button>
-            <button class="btn icon-only" id="helpBtn" title="ショートカット・使い方" aria-label="ヘルプ"><span class="ico">?</span></button>
+            <button class="btn icon-only" id="helpBtn" title="使い方" aria-label="ヘルプ"><span class="ico">?</span></button>
         </div>
     </header>
 
     <div class="main">
-        <section class="editor-section" aria-label="エディタ">
+        <section class="side" aria-label="ツール">
             <div class="toolbar">
                 <div class="toolbar-group">
-                    <button class="btn primary" id="renderBtn" title="レンダリング実行 (Ctrl/Cmd+Enter)"><span class="ico">▶</span>実行</button>
-                    <select class="control" id="templateSelect" aria-label="テンプレートを挿入">
+                    <select class="btn" id="templateSelect" aria-label="テンプレート" style="padding:6px 9px;">
                         <option value="">テンプレート…</option>
                     </select>
                 </div>
                 <div class="toolbar-group">
-                    <button class="btn icon-only" id="copyCodeBtn" title="コードをコピー" aria-label="コードをコピー"><span class="ico">⧉</span></button>
-                    <button class="btn icon-only" id="importBtn" title="ファイルを開く (.puml)" aria-label="ファイルを開く"><span class="ico">📂</span></button>
-                    <button class="btn icon-only" id="exportPumlBtn" title="ファイルを保存 (.puml)" aria-label="ファイルを保存"><span class="ico">💾</span></button>
-                    <button class="btn icon-only" id="clearBtn" title="クリア" aria-label="クリア"><span class="ico">🗑</span></button>
-                    <input type="file" id="fileInput" accept=".puml,.pu,.txt,.iuml,text/plain" class="hidden">
+                    <button class="btn icon-only" id="importBtn" title="JSONを開く" aria-label="開く"><span class="ico">📂</span></button>
+                    <button class="btn icon-only" id="exportJsonBtn" title="JSONを保存" aria-label="保存"><span class="ico">💾</span></button>
+                    <button class="btn icon-only danger" id="clearBtn" title="全消去" aria-label="全消去"><span class="ico">🗑</span></button>
+                    <input type="file" id="fileInput" accept="application/json,.json" class="hidden">
                 </div>
             </div>
-            <div class="editor-wrap">
-                <textarea id="code" spellcheck="false" autocapitalize="off" autocorrect="off"
-                    placeholder="PlantUMLコードを入力… 例:&#10;@startuml&#10;Alice -> Bob : Hello&#10;@enduml"></textarea>
+
+            <div class="side-scroll">
+                <div class="palette">
+                    <h3>ツール</h3>
+                    <div class="tool-grid" id="toolGrid"></div>
+                </div>
+                <div class="props" id="props"></div>
             </div>
-            <div class="editor-status">
-                <span id="typeLabel">—</span>
+
+            <div class="side-status">
+                <span id="countLabel">0 クラス / 0 関連</span>
                 <span class="sep"></span>
-                <span id="countLabel">0 行 / 0 文字</span>
+                <span id="modeLabel">選択</span>
             </div>
         </section>
 
         <div class="divider" id="divider" role="separator" aria-orientation="vertical" title="ドラッグで幅を調整"></div>
 
-        <section class="preview-section" aria-label="プレビュー">
+        <section class="canvas-section" aria-label="キャンバス">
             <div class="toolbar">
                 <div class="toolbar-group">
-                    <span class="toolbar-label">プレビュー</span>
+                    <span class="toolbar-label">キャンバス</span>
                     <div class="zoom-group" role="group" aria-label="ズーム">
                         <button class="zbtn" id="zoomOut" title="縮小" aria-label="縮小">−</button>
                         <span class="zoom-level" id="zoomLevel">100%</span>
@@ -283,902 +289,777 @@
                     </div>
                 </div>
                 <div class="toolbar-group">
-                    <select class="control" id="scaleSelect" title="PNG出力解像度" aria-label="PNG出力解像度">
+                    <select class="btn" id="scaleSelect" title="PNG出力解像度" aria-label="PNG解像度" style="padding:6px 9px;">
                         <option value="1">1x</option>
                         <option value="2" selected>2x</option>
                         <option value="3">3x</option>
                         <option value="4">4x</option>
                     </select>
-                    <button class="btn" id="svgBtn" disabled><span class="ico">⬇</span>SVG</button>
-                    <button class="btn" id="pngBtn" disabled><span class="ico">⬇</span>PNG</button>
-                    <button class="btn icon-only" id="copyImgBtn" title="画像をクリップボードにコピー" aria-label="画像をコピー" disabled><span class="ico">🖼</span></button>
-                    <button class="btn icon-only" id="shareBtn" title="共有リンクをコピー" aria-label="共有リンクをコピー"><span class="ico">🔗</span></button>
+                    <button class="btn" id="svgBtn"><span class="ico">⬇</span>SVG</button>
+                    <button class="btn" id="pngBtn"><span class="ico">⬇</span>PNG</button>
+                    <button class="btn icon-only" id="copyImgBtn" title="画像をコピー" aria-label="画像をコピー"><span class="ico">🖼</span></button>
+                    <button class="btn icon-only" id="shareBtn" title="共有リンクをコピー" aria-label="共有リンク"><span class="ico">🔗</span></button>
                 </div>
             </div>
-            <div class="msg error" id="error" role="alert"></div>
-            <div class="preview-area" id="previewArea">
-                <div class="spinner" id="spinner"><i></i>レンダリング中…</div>
-                <div class="preview-empty" id="emptyState">コードを入力するとここにプレビューが表示されます</div>
-                <div class="viewport" id="viewport">
-                    <div id="umlOutput"></div>
-                </div>
+            <div class="canvas-area" id="canvasArea">
+                <svg id="canvas" xmlns="http://www.w3.org/2000/svg"></svg>
+                <div class="canvas-empty" id="emptyState">「クラス追加」を選んでキャンバスをクリック、または上のテンプレートから開始</div>
             </div>
         </section>
     </div>
 
     <div class="toast-host" id="toastHost"></div>
 
-    <script type="module">
-        'use strict';
+    <script>
+    'use strict';
+    const $ = id => document.getElementById(id);
+    const SVGNS = 'http://www.w3.org/2000/svg';
+    const FONT = "-apple-system,'Segoe UI','Noto Sans JP',sans-serif";
+    const MFONT = "'SF Mono','Consolas',monospace";
 
-        const $ = id => document.getElementById(id);
+    /* ============================================================
+     * 関連タイプ定義（始点=from側 / 終点=to側）
+     * ============================================================ */
+    const REL = {
+        association: { label: '関連',  dash: false, start: 'none',         end: 'none' },
+        directed:    { label: '誘導',  dash: false, start: 'none',         end: 'open' },
+        inheritance: { label: '継承',  dash: false, start: 'none',         end: 'triangle' },
+        realization: { label: '実現',  dash: true,  start: 'none',         end: 'triangle' },
+        dependency:  { label: '依存',  dash: true,  start: 'none',         end: 'open' },
+        aggregation: { label: '集約',  dash: false, start: 'diamond',      end: 'none' },
+        composition: { label: '合成',  dash: false, start: 'diamondFilled', end: 'none' }
+    };
+    const TOOLS = ['select', 'class', 'association', 'directed', 'inheritance', 'realization', 'dependency', 'aggregation', 'composition'];
+    const TOOL_LABEL = { select: '選択', class: 'クラス追加' };
 
-        /* ============================================================
-         * PlantUML サーバー
-         *   テキストをエンコードして /svg/<enc> から SVG を取得する。
-         *   複数サーバーをフォールバックで試行。
-         * ============================================================ */
-        const PLANTUML_SERVERS = [
-            'https://www.plantuml.com/plantuml',
-            'https://kroki.io/plantuml'   // ※ /svg/~h<hex> 形式には非対応。deflate時のみ利用
-        ];
+    // パレット用の小さなプレビューSVG
+    function toolGlyph(t) {
+        if (t === 'select') return '<svg viewBox="0 0 26 16"><path d="M5 2 L5 13 L8 10 L10 14 L12 13 L10 9 L14 9 Z" fill="currentColor" stroke="currentColor" stroke-width="1"/></svg>';
+        if (t === 'class') return '<svg viewBox="0 0 26 16"><rect x="4" y="2" width="18" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/><line x1="4" y1="6" x2="22" y2="6" stroke="currentColor" stroke-width="1.1"/></svg>';
+        const r = REL[t];
+        const dash = r.dash ? 'stroke-dasharray="3 2"' : '';
+        let s = `<svg viewBox="0 0 26 16"><line x1="3" y1="8" x2="20" y2="8" stroke="currentColor" stroke-width="1.3" ${dash}/>`;
+        if (r.end === 'open') s += '<path d="M20 8 L15 5 M20 8 L15 11" stroke="currentColor" stroke-width="1.3" fill="none"/>';
+        if (r.end === 'triangle') s += '<path class="hollow" d="M23 8 L16 4.5 L16 11.5 Z" fill="none" stroke="currentColor" stroke-width="1.3"/>';
+        if (r.start === 'diamond') s += '<path class="hollow" d="M3 8 L7 5.5 L11 8 L7 10.5 Z" fill="none" stroke="currentColor" stroke-width="1.3"/>';
+        if (r.start === 'diamondFilled') s += '<path d="M3 8 L7 5.5 L11 8 L7 10.5 Z" fill="currentColor" stroke="currentColor" stroke-width="1.3"/>';
+        return s + '</svg>';
+    }
 
-        /* ------------------------------------------------------------
-         * pako(deflate) を best-effort で読み込み。
-         *   読み込めれば deflate でコンパクトな URL を生成。
-         *   失敗しても ~h 16進エンコードで動作する（無依存フォールバック）。
-         * ------------------------------------------------------------ */
-        const PAKO_SOURCES = [
-            'https://cdn.jsdelivr.net/npm/pako@2/dist/pako.esm.mjs',
-            'https://unpkg.com/pako@2/dist/pako.esm.mjs',
-            'https://esm.sh/pako@2'
-        ];
-        function withTimeout(promise, ms) {
-            return Promise.race([
-                promise,
-                new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))
-            ]);
+    /* ============================================================
+     * State
+     * ============================================================ */
+    let state = { nodes: [], edges: [] };
+    let selection = null;          // {kind:'node'|'edge', id}
+    let mode = 'select';
+    const view = { tx: 60, ty: 60, s: 1 };
+    let seq = 1;
+    const LS_KEY = 'uml_class_editor_v1';
+    const LS_THEME = 'uml_theme';
+    let theme = localStorage.getItem(LS_THEME) || 'light';
+
+    const canvas = $('canvas');
+    const viewG = el('g', { id: 'view' });               // pan/zoom layer
+    const edgesLayer = el('g', { id: 'edges' });
+    const nodesLayer = el('g', { id: 'nodes' });
+    const overlay = el('g', { id: 'overlay' });          // 一時線など
+    viewG.append(edgesLayer, nodesLayer, overlay);
+    canvas.append(viewG);
+
+    function el(name, attrs) {
+        const e = document.createElementNS(SVGNS, name);
+        if (attrs) for (const k in attrs) e.setAttribute(k, attrs[k]);
+        return e;
+    }
+    function uid(p) { return p + (seq++); }
+
+    /* ---- text measuring ---- */
+    const mctx = document.createElement('canvas').getContext('2d');
+    function measure(text, font) { mctx.font = font; return mctx.measureText(text).width; }
+
+    /* ============================================================
+     * Node layout
+     * ============================================================ */
+    const PADX = 12, LINE = 18, NAMEH = 22;
+    function layoutNode(n) {
+        const nameFont = "600 14px " + FONT;
+        const stereoFont = "italic 12px " + FONT;
+        const memFont = "13px " + MFONT;
+        const attrs = n.attributes || [], methods = n.methods || [];
+        let maxW = measure(n.name || 'Class', nameFont);
+        if (n.stereotype) maxW = Math.max(maxW, measure('«' + n.stereotype + '»', stereoFont));
+        for (const a of attrs) maxW = Math.max(maxW, measure(a, memFont));
+        for (const m of methods) maxW = Math.max(maxW, measure(m, memFont));
+        n.w = Math.max(130, Math.ceil(maxW) + PADX * 2);
+        const headH = (n.stereotype ? 16 : 0) + NAMEH + 8;
+        const attrH = attrs.length ? attrs.length * LINE + 8 : 12;
+        const methH = methods.length ? methods.length * LINE + 8 : 12;
+        n._headH = headH; n._attrH = attrH; n._methH = methH;
+        n.h = headH + attrH + methH;
+    }
+
+    /* ============================================================
+     * Render
+     * ============================================================ */
+    let rafPending = false;
+    function scheduleRender() {
+        if (rafPending) return;
+        rafPending = true;
+        requestAnimationFrame(() => { rafPending = false; render(); });
+    }
+
+    function render() {
+        state.nodes.forEach(layoutNode);
+        // edges first (under nodes)
+        const ef = document.createDocumentFragment();
+        for (const e of state.edges) { const g = drawEdge(e); if (g) ef.append(g); }
+        edgesLayer.replaceChildren(ef);
+        const nf = document.createDocumentFragment();
+        for (const n of state.nodes) nf.append(drawNode(n));
+        nodesLayer.replaceChildren(nf);
+        applyView();
+        $('emptyState').classList.toggle('hidden', state.nodes.length > 0);
+        $('countLabel').textContent = `${state.nodes.length} クラス / ${state.edges.length} 関連`;
+        $('undoBtn').disabled = !history.length;
+        $('redoBtn').disabled = !future.length;
+    }
+
+    function drawNode(n) {
+        const g = el('g', { class: 'node' + (isSel('node', n.id) ? ' selected' : ''), transform: `translate(${n.x},${n.y})` });
+        g.dataset.node = n.id;
+        g.append(el('rect', { class: 'node-rect', x: 0, y: 0, width: n.w, height: n.h, rx: 3 }));
+        g.append(el('rect', { class: 'node-head', x: 1, y: 1, width: n.w - 2, height: n._headH - 1, rx: 2 }));
+        let y = 0;
+        if (n.stereotype) {
+            y += 14;
+            g.append(text(n.w / 2, y, '«' + n.stereotype + '»', 'node-stereo', 'middle'));
         }
-        let pako = null;
-        (async () => {
-            for (const url of PAKO_SOURCES) {
-                try {
-                    const mod = await withTimeout(import(/* @vite-ignore */ url), 8000);
-                    const p = mod && (mod.default || mod);
-                    if (p && (p.deflateRaw || p.deflate)) { pako = p; break; }
-                } catch (e) {
-                    console.warn('[pako] CDN読込失敗:', url, e.message);
-                }
+        y = n.stereotype ? 14 + NAMEH - 6 : NAMEH - 2;
+        g.append(text(n.w / 2, y, n.name || 'Class', 'node-name', 'middle'));
+        g.append(el('line', { class: 'compartment-sep', x1: 0, y1: n._headH, x2: n.w, y2: n._headH }));
+        let ay = n._headH + 14;
+        for (const a of (n.attributes || [])) { g.append(text(PADX, ay, a, 'node-member', 'start')); ay += LINE; }
+        g.append(el('line', { class: 'compartment-sep', x1: 0, y1: n._headH + n._attrH, x2: n.w, y2: n._headH + n._attrH }));
+        let my = n._headH + n._attrH + 14;
+        for (const m of (n.methods || [])) { g.append(text(PADX, my, m, 'node-member', 'start')); my += LINE; }
+        return g;
+    }
+
+    function text(x, y, str, cls, anchor) {
+        const t = el('text', { x, y, class: cls, 'text-anchor': anchor || 'start' });
+        t.textContent = str;
+        return t;
+    }
+
+    /* ---- vector helpers ---- */
+    const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y });
+    const add = (a, b) => ({ x: a.x + b.x, y: a.y + b.y });
+    const mul = (a, k) => ({ x: a.x * k, y: a.y * k });
+    const len = v => Math.hypot(v.x, v.y) || 1;
+    const unit = v => mul(v, 1 / len(v));
+    const perp = v => ({ x: -v.y, y: v.x });
+    const center = n => ({ x: n.x + n.w / 2, y: n.y + n.h / 2 });
+
+    function borderPoint(n, toward) {
+        const c = center(n);
+        const d = sub(toward, c);
+        if (!d.x && !d.y) return c;
+        const sx = d.x !== 0 ? (n.w / 2) / Math.abs(d.x) : Infinity;
+        const sy = d.y !== 0 ? (n.h / 2) / Math.abs(d.y) : Infinity;
+        const s = Math.min(sx, sy);
+        return { x: c.x + d.x * s, y: c.y + d.y * s };
+    }
+
+    function drawEdge(e) {
+        const a = nodeById(e.from), b = nodeById(e.to);
+        if (!a || !b) return null;
+        const r = REL[e.type] || REL.association;
+        let pA = borderPoint(a, center(b));
+        let pB = borderPoint(b, center(a));
+        const dirEnd = unit(sub(pB, pA));     // points toward B
+        const dirStart = mul(dirEnd, -1);     // points toward A
+        // shorten line so triangle/diamond don't overlap
+        const startShorten = (r.start === 'diamond' || r.start === 'diamondFilled') ? 16 : 0;
+        const endShorten = (r.end === 'triangle') ? 14 : 0;
+        const lA = add(pA, mul(dirEnd, startShorten));
+        const lB = add(pB, mul(dirStart, endShorten));
+
+        const g = el('g', { class: 'edge' + (isSel('edge', e.id) ? ' selected' : '') });
+        g.dataset.edge = e.id;
+        g.append(el('line', { class: 'edge-hit', x1: pA.x, y1: pA.y, x2: pB.x, y2: pB.y }));
+        const line = el('line', { class: 'edge-line', x1: lA.x, y1: lA.y, x2: lB.x, y2: lB.y });
+        if (r.dash) line.setAttribute('stroke-dasharray', '7 5');
+        g.append(line);
+
+        if (r.end !== 'none') g.append(marker(pB, dirEnd, r.end));
+        if (r.start !== 'none') g.append(marker(pA, dirStart, r.start));
+
+        // labels
+        if (e.fromMult) g.append(edgeLabel(offsetLabel(pA, dirEnd, 16), e.fromMult));
+        if (e.toMult) g.append(edgeLabel(offsetLabel(pB, dirStart, 16), e.toMult));
+        if (e.label) {
+            const mid = { x: (pA.x + pB.x) / 2, y: (pA.y + pB.y) / 2 };
+            g.append(edgeLabel({ x: mid.x, y: mid.y - 6 }, e.label, true));
+        }
+        return g;
+    }
+
+    function offsetLabel(p, dirAlong, d) {
+        // 線に沿って少し内側、かつ少し上にずらす
+        const along = mul(dirAlong, d);
+        return { x: p.x + along.x + 4, y: p.y + along.y - 4 };
+    }
+
+    function edgeLabel(p, str, mid) {
+        const g = el('g');
+        const w = measure(str, "12px " + FONT) + 6;
+        g.append(el('rect', { class: 'edge-label-bg', x: p.x - (mid ? w / 2 : 0), y: p.y - 11, width: w, height: 14, rx: 2 }));
+        g.append(text(p.x + (mid ? 0 : 3), p.y, str, 'edge-label', mid ? 'middle' : 'start'));
+        return g;
+    }
+
+    function marker(tip, dir, type) {
+        const p = perp(dir);
+        if (type === 'open') {
+            const m = 12, hw = 6;
+            const base = sub(tip, mul(dir, m));
+            const a = add(base, mul(p, hw)), b = sub(base, mul(p, hw));
+            return el('path', { class: 'marker-open', d: `M${a.x},${a.y} L${tip.x},${tip.y} L${b.x},${b.y}` });
+        }
+        if (type === 'triangle') {
+            const m = 14, hw = 7;
+            const base = sub(tip, mul(dir, m));
+            const a = add(base, mul(p, hw)), b = sub(base, mul(p, hw));
+            return el('path', { class: 'marker-hollow', d: `M${tip.x},${tip.y} L${a.x},${a.y} L${b.x},${b.y} Z` });
+        }
+        // diamonds
+        const m = 16, hw = 7;
+        const back = sub(tip, mul(dir, m));
+        const midp = sub(tip, mul(dir, m / 2));
+        const a = add(midp, mul(p, hw)), b = sub(midp, mul(p, hw));
+        const cls = type === 'diamondFilled' ? 'marker-filled' : 'marker-hollow';
+        return el('path', { class: cls, d: `M${tip.x},${tip.y} L${a.x},${a.y} L${back.x},${back.y} L${b.x},${b.y} Z` });
+    }
+
+    /* ============================================================
+     * View transform
+     * ============================================================ */
+    function applyView() { viewG.setAttribute('transform', `translate(${view.tx},${view.ty}) scale(${view.s})`); $('zoomLevel').textContent = Math.round(view.s * 100) + '%'; }
+    function toDiagram(cx, cy) {
+        const r = canvas.getBoundingClientRect();
+        return { x: (cx - r.left - view.tx) / view.s, y: (cy - r.top - view.ty) / view.s };
+    }
+    function zoomAt(factor, cx, cy) {
+        const ns = Math.max(0.15, Math.min(4, view.s * factor));
+        const k = ns / view.s;
+        view.tx = cx - (cx - view.tx) * k;
+        view.ty = cy - (cy - view.ty) * k;
+        view.s = ns; applyView();
+    }
+    $('zoomIn').onclick = () => zoomAt(1.2, canvas.clientWidth / 2, canvas.clientHeight / 2);
+    $('zoomOut').onclick = () => zoomAt(1 / 1.2, canvas.clientWidth / 2, canvas.clientHeight / 2);
+    $('zoomFit').onclick = fitView;
+
+    function bbox() {
+        if (!state.nodes.length) return { x: 0, y: 0, w: 400, h: 300 };
+        let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+        for (const n of state.nodes) { x1 = Math.min(x1, n.x); y1 = Math.min(y1, n.y); x2 = Math.max(x2, n.x + n.w); y2 = Math.max(y2, n.y + n.h); }
+        return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+    }
+    function fitView() {
+        state.nodes.forEach(layoutNode);
+        const b = bbox(), pad = 40;
+        const aw = canvas.clientWidth - pad * 2, ah = canvas.clientHeight - pad * 2;
+        view.s = Math.max(0.15, Math.min(aw / b.w, ah / b.h, 1.5));
+        view.tx = pad + (aw - b.w * view.s) / 2 - b.x * view.s;
+        view.ty = pad + (ah - b.h * view.s) / 2 - b.y * view.s;
+        applyView();
+    }
+
+    canvas.addEventListener('wheel', e => {
+        e.preventDefault();
+        const r = canvas.getBoundingClientRect();
+        zoomAt(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX - r.left, e.clientY - r.top);
+    }, { passive: false });
+
+    /* ============================================================
+     * Pointer interaction
+     * ============================================================ */
+    let drag = null; // {kind, ...}
+    canvas.addEventListener('pointerdown', e => {
+        if (e.button !== 0) return;
+        const nodeEl = e.target.closest('[data-node]');
+        const edgeEl = e.target.closest('[data-edge]');
+        const pt = toDiagram(e.clientX, e.clientY);
+
+        if (mode === 'class' && !nodeEl) { createClass(pt.x, pt.y); return; }
+
+        if (mode !== 'select' && mode !== 'class') {
+            // relationship: must start on a node
+            if (nodeEl) {
+                drag = { kind: 'edge', from: nodeEl.dataset.node, temp: el('line', { class: 'temp-line' }) };
+                const c = center(nodeById(drag.from));
+                drag.temp.setAttribute('x1', c.x); drag.temp.setAttribute('y1', c.y);
+                drag.temp.setAttribute('x2', pt.x); drag.temp.setAttribute('y2', pt.y);
+                overlay.append(drag.temp);
+                canvas.setPointerCapture(e.pointerId);
             }
-            if (!pako) console.info('[pako] 未読込 — ~h 16進エンコードで動作します');
-        })();
+            return;
+        }
 
-        /* ---- PlantUML 専用 base64 ---- */
-        function encode6bit(b) {
-            if (b < 10) return String.fromCharCode(48 + b);
-            b -= 10;
-            if (b < 26) return String.fromCharCode(65 + b);
-            b -= 26;
-            if (b < 26) return String.fromCharCode(97 + b);
-            b -= 26;
-            if (b === 0) return '-';
-            if (b === 1) return '_';
-            return '?';
+        // select mode
+        if (nodeEl) {
+            select('node', nodeEl.dataset.node);
+            const n = nodeById(nodeEl.dataset.node);
+            drag = { kind: 'node', id: n.id, dx: pt.x - n.x, dy: pt.y - n.y, moved: false };
+            canvas.setPointerCapture(e.pointerId);
+        } else if (edgeEl) {
+            select('edge', edgeEl.dataset.edge);
+        } else {
+            select(null);
+            drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, ox: view.tx, oy: view.ty };
+            canvas.setPointerCapture(e.pointerId);
         }
-        function append3bytes(b1, b2, b3) {
-            const c1 = b1 >> 2;
-            const c2 = ((b1 & 0x3) << 4) | (b2 >> 4);
-            const c3 = ((b2 & 0xF) << 2) | (b3 >> 6);
-            const c4 = b3 & 0x3F;
-            return encode6bit(c1 & 0x3F) + encode6bit(c2 & 0x3F) + encode6bit(c3 & 0x3F) + encode6bit(c4 & 0x3F);
+    });
+
+    canvas.addEventListener('pointermove', e => {
+        if (!drag) return;
+        if (drag.kind === 'pan') {
+            view.tx = drag.ox + (e.clientX - drag.sx);
+            view.ty = drag.oy + (e.clientY - drag.sy);
+            applyView();
+        } else if (drag.kind === 'node') {
+            const pt = toDiagram(e.clientX, e.clientY);
+            const n = nodeById(drag.id);
+            n.x = Math.round(pt.x - drag.dx); n.y = Math.round(pt.y - drag.dy);
+            drag.moved = true;
+            scheduleRender();
+        } else if (drag.kind === 'edge') {
+            const pt = toDiagram(e.clientX, e.clientY);
+            drag.temp.setAttribute('x2', pt.x); drag.temp.setAttribute('y2', pt.y);
         }
-        function encode64(data) {
-            let r = '';
-            for (let i = 0; i < data.length; i += 3) {
-                if (i + 2 === data.length)      r += append3bytes(data[i], data[i + 1], 0);
-                else if (i + 1 === data.length) r += append3bytes(data[i], 0, 0);
-                else                            r += append3bytes(data[i], data[i + 1], data[i + 2]);
+    });
+
+    canvas.addEventListener('pointerup', e => {
+        if (!drag) return;
+        if (drag.kind === 'edge') {
+            drag.temp.remove();
+            const tEl = document.elementFromPoint(e.clientX, e.clientY);
+            const targetNode = tEl && tEl.closest && tEl.closest('[data-node]');
+            if (targetNode && targetNode.dataset.node !== drag.from) {
+                createEdge(drag.from, targetNode.dataset.node, mode);
             }
-            return r;
+        } else if (drag.kind === 'node' && drag.moved) {
+            commit(); save();
         }
-        function toHex(bytes) {
-            let s = '';
-            for (let i = 0; i < bytes.length; i++) s += bytes[i].toString(16).padStart(2, '0');
-            return s;
+        try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+        drag = null;
+    });
+
+    canvas.addEventListener('dblclick', e => {
+        if (e.target.closest('[data-node]')) return;
+        const pt = toDiagram(e.clientX, e.clientY);
+        createClass(pt.x, pt.y);
+    });
+
+    /* ============================================================
+     * Mutations
+     * ============================================================ */
+    function nodeById(id) { return state.nodes.find(n => n.id === id); }
+    function edgeById(id) { return state.edges.find(e => e.id === id); }
+
+    function createClass(x, y) {
+        commit();
+        const n = { id: uid('n'), x: Math.round(x - 65), y: Math.round(y - 30), name: 'NewClass', stereotype: '', attributes: ['- field: Type'], methods: ['+ method(): void'] };
+        state.nodes.push(n);
+        setMode('select');
+        select('node', n.id);
+        render(); save();
+        const f = $('f_name'); if (f) { f.focus(); f.select(); }
+    }
+
+    function createEdge(from, to, type) {
+        commit();
+        const e = { id: uid('e'), from, to, type, fromMult: '', toMult: '', label: '' };
+        state.edges.push(e);
+        setMode('select');
+        select('edge', e.id);
+        render(); save();
+        toast(REL[type].label + 'を追加しました');
+    }
+
+    function deleteSelection() {
+        if (!selection) return;
+        commit();
+        if (selection.kind === 'node') {
+            state.nodes = state.nodes.filter(n => n.id !== selection.id);
+            state.edges = state.edges.filter(e => e.from !== selection.id && e.to !== selection.id);
+        } else {
+            state.edges = state.edges.filter(e => e.id !== selection.id);
         }
+        select(null); render(); save();
+    }
 
-        // PlantUML テキスト -> URLパス用エンコード文字列を返す
-        function plantumlEncode(text) {
-            const bytes = new TextEncoder().encode(text);
-            if (pako) {
-                const def = (pako.deflateRaw || pako.deflate).call(pako, bytes, { level: 9 });
-                return encode64(def);          // deflate + plantuml-base64
-            }
-            return '~h' + toHex(bytes);        // 無依存フォールバック（16進）
+    /* ============================================================
+     * History (undo / redo)
+     * ============================================================ */
+    let history = [], future = [];
+    function snap() { return JSON.stringify(state); }
+    function commit() { history.push(snap()); if (history.length > 120) history.shift(); future = []; }
+    function undo() {
+        if (!history.length) return;
+        future.push(snap()); state = JSON.parse(history.pop());
+        selection = null; render(); renderPanel(); save();
+    }
+    function redo() {
+        if (!future.length) return;
+        history.push(snap()); state = JSON.parse(future.pop());
+        selection = null; render(); renderPanel(); save();
+    }
+    $('undoBtn').onclick = undo;
+    $('redoBtn').onclick = redo;
+
+    /* ============================================================
+     * Selection & properties panel
+     * ============================================================ */
+    function isSel(kind, id) { return selection && selection.kind === kind && selection.id === id; }
+    function select(kind, id) {
+        selection = kind ? { kind, id } : null;
+        // update classes cheaply
+        nodesLayer.querySelectorAll('.node').forEach(g => g.classList.toggle('selected', isSel('node', g.dataset.node)));
+        edgesLayer.querySelectorAll('.edge').forEach(g => g.classList.toggle('selected', isSel('edge', g.dataset.edge)));
+        renderPanel();
+    }
+
+    let editBaseline = null;
+    const props = $('props');
+    props.addEventListener('focusin', () => { editBaseline = snap(); });
+    function recordEdit() { if (editBaseline) { history.push(editBaseline); if (history.length > 120) history.shift(); future = []; editBaseline = snap(); $('undoBtn').disabled = false; } }
+
+    function renderPanel() {
+        if (!selection) {
+            props.innerHTML = `<h3>使い方</h3><div class="empty-hint">
+                ・左の<b>ツール</b>でモードを選択<br>
+                ・<b>クラス追加</b>でキャンバスをクリック（または空白をダブルクリック）<br>
+                ・<b>関連線</b>はノードからノードへドラッグ<br>
+                ・<kbd>Delete</kbd> 選択を削除 / <kbd>Ctrl+Z</kbd> 取消<br>
+                ・ホイールで拡大縮小、空白ドラッグで移動</div>`;
+            return;
         }
-
-        // @start が無ければ @startuml/@enduml で包む
-        function normalizeSource(src) {
-            const s = src.trim();
-            if (/^@start/i.test(s)) return s;
-            return '@startuml\n' + s + '\n@enduml';
+        if (selection.kind === 'node') {
+            const n = nodeById(selection.id); if (!n) { select(null); return; }
+            props.innerHTML = `<h3>クラス</h3>
+                <div class="field"><label>クラス名</label><input id="f_name" value="${esc(n.name)}"></div>
+                <div class="field"><label>ステレオタイプ（任意）</label><input id="f_stereo" value="${esc(n.stereotype || '')}" placeholder="interface, abstract …"></div>
+                <div class="field"><label>属性（1行に1つ）</label><textarea id="f_attrs" placeholder="- name: String">${esc((n.attributes || []).join('\n'))}</textarea></div>
+                <div class="field"><label>操作（1行に1つ）</label><textarea id="f_methods" placeholder="+ getName(): String">${esc((n.methods || []).join('\n'))}</textarea></div>
+                <button class="btn danger" id="f_del" style="width:100%"><span class="ico">🗑</span> このクラスを削除</button>`;
+            const upd = () => { n.name = $('f_name').value; n.stereotype = $('f_stereo').value.trim();
+                n.attributes = lines($('f_attrs').value); n.methods = lines($('f_methods').value); render(); };
+            $('f_name').oninput = $('f_stereo').oninput = $('f_attrs').oninput = $('f_methods').oninput = upd;
+            ['f_name','f_stereo','f_attrs','f_methods'].forEach(id => $(id).addEventListener('change', () => { recordEdit(); save(); }));
+            $('f_del').onclick = deleteSelection;
+        } else {
+            const e = edgeById(selection.id); if (!e) { select(null); return; }
+            const opts = Object.entries(REL).map(([k, v]) => `<option value="${k}" ${k === e.type ? 'selected' : ''}>${v.label}</option>`).join('');
+            const a = nodeById(e.from), b = nodeById(e.to);
+            props.innerHTML = `<h3>関連</h3>
+                <div class="field"><label>種類</label><select id="f_type">${opts}</select></div>
+                <div class="field"><label>多重度（${esc(a ? a.name : '?')}側）</label><input id="f_fmult" value="${esc(e.fromMult || '')}" placeholder="1, 0..*, *"></div>
+                <div class="field"><label>多重度（${esc(b ? b.name : '?')}側）</label><input id="f_tmult" value="${esc(e.toMult || '')}" placeholder="1, 0..*, *"></div>
+                <div class="field"><label>ラベル（任意）</label><input id="f_label" value="${esc(e.label || '')}" placeholder="uses, owns …"></div>
+                <button class="btn" id="f_swap" style="width:100%;margin-bottom:8px"><span class="ico">⇄</span> 向きを反転</button>
+                <button class="btn danger" id="f_del" style="width:100%"><span class="ico">🗑</span> この関連を削除</button>`;
+            const upd = () => { e.type = $('f_type').value; e.fromMult = $('f_fmult').value.trim();
+                e.toMult = $('f_tmult').value.trim(); e.label = $('f_label').value.trim(); render(); };
+            $('f_type').onchange = () => { upd(); recordEdit(); save(); };
+            $('f_fmult').oninput = $('f_tmult').oninput = $('f_label').oninput = upd;
+            ['f_fmult','f_tmult','f_label'].forEach(id => $(id).addEventListener('change', () => { recordEdit(); save(); }));
+            $('f_swap').onclick = () => { commit(); [e.from, e.to] = [e.to, e.from]; [e.fromMult, e.toMult] = [e.toMult, e.fromMult]; render(); renderPanel(); save(); };
+            $('f_del').onclick = deleteSelection;
         }
+    }
+    function lines(s) { return s.split('\n').map(x => x.trimEnd()).filter(x => x.trim() !== ''); }
+    function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
-        // サーバーURL一覧を返す（hexは ~h 非対応サーバーを除外）
-        function buildUrls(src, format = 'svg') {
-            const enc = plantumlEncode(normalizeSource(src));
-            const isHex = enc.startsWith('~h');
-            return PLANTUML_SERVERS
-                .filter(base => !isHex || base.includes('plantuml.com'))
-                .map(base => `${base}/${format}/${enc}`);
-        }
+    /* ============================================================
+     * Tool palette
+     * ============================================================ */
+    const toolGrid = $('toolGrid');
+    TOOLS.forEach(t => {
+        const b = document.createElement('button');
+        b.className = 'tool'; b.dataset.tool = t;
+        b.innerHTML = `<span class="gly">${toolGlyph(t)}</span><span>${TOOL_LABEL[t] || REL[t].label}</span>`;
+        b.onclick = () => setMode(t);
+        toolGrid.append(b);
+    });
+    function setMode(m) {
+        mode = m;
+        toolGrid.querySelectorAll('.tool').forEach(b => b.classList.toggle('active', b.dataset.tool === m));
+        canvas.classList.remove('mode-select', 'mode-class', 'mode-rel');
+        canvas.classList.add(m === 'select' ? 'mode-select' : m === 'class' ? 'mode-class' : 'mode-rel');
+        $('modeLabel').textContent = TOOL_LABEL[m] || (REL[m] ? REL[m].label + '（接続）' : m);
+        setStatus(m === 'select' ? '' : 'ok', m === 'select' ? '選択モード' :
+            m === 'class' ? 'クリックでクラス配置' : REL[m].label + ': ノード間をドラッグ');
+    }
 
-        /* ============================================================
-         * Templates (PlantUML)
-         * ============================================================ */
-        const TEMPLATES = {
-            class: ['クラス図', `@startuml
-class 動物 {
-  +名前: String
-  +年齢: int
-  +食べる()
-  +眠る()
-}
-class 犬 {
-  +犬種: String
-  +吠える()
-}
-動物 <|-- 犬
-@enduml`],
-            sequence: ['シーケンス図', `@startuml
-actor ユーザー as U
-participant システム as S
-database DB as D
-U -> S : リクエスト
-S -> D : クエリ
-D --> S : 結果
-S --> U : レスポンス
-@enduml`],
-            usecase: ['ユースケース図', `@startuml
-left to right direction
-actor 利用者 as user
-actor 管理者 as admin
-rectangle システム {
-  user --> (ログイン)
-  user --> (商品検索)
-  user --> (注文する)
-  admin --> (在庫管理)
-  (注文する) ..> (ログイン) : <<include>>
-}
-@enduml`],
-            activity: ['アクティビティ図', `@startuml
-start
-:ログイン;
-if (認証成功?) then (はい)
-  :メニュー表示;
-  repeat
-    :操作を実行;
-  repeat while (続ける?) is (はい)
-  :ログアウト;
-else (いいえ)
-  :エラー表示;
-endif
-stop
-@enduml`],
-            state: ['状態遷移図', `@startuml
-[*] --> 待機
-待機 --> 処理中 : 開始
-処理中 --> 完了 : 成功
-処理中 --> エラー : 失敗
-エラー --> 待機 : リトライ
-完了 --> [*]
-@enduml`],
-            component: ['コンポーネント図', `@startuml
-package "フロントエンド" {
-  [Web UI]
-}
-package "バックエンド" {
-  [API サーバー]
-  [認証サービス]
-}
-database "DB" {
-  [PostgreSQL]
-}
-[Web UI] --> [API サーバー] : HTTP
-[API サーバー] --> [認証サービス]
-[API サーバー] --> [PostgreSQL]
-@enduml`],
-            deployment: ['配置図', `@startuml
-node "Webサーバー" {
-  artifact "app.war"
-}
-node "DBサーバー" {
-  database "PostgreSQL"
-}
-cloud "CDN" {
-  artifact "静的ファイル"
-}
-"Webサーバー" --> "DBサーバー" : JDBC
-"CDN" --> "Webサーバー"
-@enduml`],
-            object: ['オブジェクト図', `@startuml
-object 田中 {
-  名前 = "田中太郎"
-  年齢 = 30
-}
-object 注文1 {
-  番号 = "A-001"
-  金額 = 5000
-}
-田中 --> 注文1 : places
-@enduml`],
-            er: ['ER図 (entity)', `@startuml
-entity 顧客 {
-  * 顧客ID : int
-  --
-  名前 : string
-  メール : string
-}
-entity 注文 {
-  * 注文ID : int
-  --
-  顧客ID : int
-  注文日 : date
-}
-顧客 ||--o{ 注文
-@enduml`],
-            packagediag: ['パッケージ図', `@startuml
-package "ドメイン層" {
-  class 注文
-  class 顧客
-}
-package "アプリ層" {
-  class 注文サービス
-}
-package "インフラ層" {
-  class 注文リポジトリ
-}
-注文サービス --> 注文
-注文サービス --> 注文リポジトリ
-@enduml`],
-            mindmap: ['マインドマップ', `@startmindmap
-* アイデア
-** 企画
-*** 要件
-*** 設計
-** 開発
-*** 実装
-*** テスト
-@endmindmap`],
-            gantt: ['ガント図', `@startgantt
-project starts 2024-01-01
-[要件定義] lasts 14 days
-[基本設計] lasts 10 days
-[基本設計] starts at [要件定義]'s end
-[実装] lasts 21 days
-[実装] starts at [基本設計]'s end
-[テスト] lasts 14 days
-[テスト] starts at [実装]'s end
-@endgantt`],
-            json: ['JSONデータ', `@startjson
-{
-  "name": "山田太郎",
-  "age": 28,
-  "roles": ["admin", "editor"],
-  "address": {
-    "city": "東京",
-    "zip": "100-0001"
-  }
-}
-@endjson`]
-        };
+    /* ============================================================
+     * Export (SVG / PNG) — 完全クライアントサイド
+     * ============================================================ */
+    function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+    function exportStyle() {
+        const NF = cssVar('--node-fill'), NS = cssVar('--node-stroke'), NH = cssVar('--node-head'),
+              TX = cssVar('--text'), MU = cssVar('--muted'), LN = cssVar('--line'), CB = cssVar('--canvas-bg');
+        return `
+        .node-rect{fill:${NF};stroke:${NS};stroke-width:1.2}
+        .node-head{fill:${NH}}
+        .compartment-sep{stroke:${NS};stroke-width:1}
+        .node-name{fill:${TX};font:600 14px ${FONT}}
+        .node-stereo{fill:${MU};font:italic 12px ${FONT}}
+        .node-member{fill:${TX};font:13px ${MFONT}}
+        .edge-line{stroke:${LN};fill:none;stroke-width:1.4}
+        .marker-hollow{fill:${NF};stroke:${LN};stroke-width:1.4}
+        .marker-filled{fill:${LN};stroke:${LN};stroke-width:1.4}
+        .marker-open{fill:none;stroke:${LN};stroke-width:1.4}
+        .edge-label{fill:${TX};font:12px ${FONT}}
+        .edge-label-bg{fill:${CB};opacity:.85}
+        .edge-hit,.temp-line{display:none}`;
+    }
+    function buildSVG() {
+        state.nodes.forEach(layoutNode);
+        const b = bbox(), pad = 24;
+        const W = Math.ceil(b.w + pad * 2), H = Math.ceil(b.h + pad * 2);
+        const inner = edgesLayer.outerHTML + nodesLayer.outerHTML;
+        return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="${b.x - pad} ${b.y - pad} ${W} ${H}">
+<style>${exportStyle()}</style>
+<rect x="${b.x - pad}" y="${b.y - pad}" width="${W}" height="${H}" fill="${cssVar('--canvas-bg')}"/>
+${inner}
+</svg>`;
+    }
+    function download(blob, name) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = name;
+        document.body.append(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+    function tsName(ext) { const d = new Date(), p = n => String(n).padStart(2, '0');
+        return `uml-${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`; }
 
-        /* ============================================================
-         * Elements & state
-         * ============================================================ */
-        const code = $('code'),
-              output = $('umlOutput'),
-              viewport = $('viewport'),
-              previewArea = $('previewArea'),
-              errorBox = $('error'),
-              spinner = $('spinner'),
-              emptyState = $('emptyState'),
-              zoomLevel = $('zoomLevel'),
-              savedBadge = $('savedBadge'),
-              statusPill = $('statusPill'),
-              statusText = $('statusText'),
-              typeLabel = $('typeLabel'),
-              countLabel = $('countLabel'),
-              svgBtn = $('svgBtn'),
-              pngBtn = $('pngBtn'),
-              copyImgBtn = $('copyImgBtn');
-
-        const LS_CODE = 'plantuml_code', LS_THEME = 'plantuml_theme';
-
-        let scale = 1, tx = 0, ty = 0;       // viewport transform
-        let naturalW = 0, naturalH = 0;      // rendered svg natural size
-        let hasSvg = false;                  // SVG DOM が取得できているか（exportの可否）
-        let renderToken = 0;
-        let saveTimer, debounceTimer;
-        let theme = localStorage.getItem(LS_THEME) || 'light';
-
-        /* ============================================================
-         * UI helpers
-         * ============================================================ */
-        function toast(text, isErr) {
-            const host = $('toastHost');
-            const el = document.createElement('div');
-            el.className = 'toast' + (isErr ? ' err' : '');
-            el.textContent = text;
-            host.appendChild(el);
-            requestAnimationFrame(() => el.classList.add('show'));
-            setTimeout(() => {
-                el.classList.remove('show');
-                setTimeout(() => el.remove(), 250);
-            }, isErr ? 4000 : 2200);
-        }
-
-        function setStatus(state, text) {
-            statusPill.classList.remove('ok', 'bad');
-            if (state === 'ok') statusPill.classList.add('ok');
-            else if (state === 'bad') statusPill.classList.add('bad');
-            statusText.textContent = text;
-        }
-
-        function showError(text) {
-            errorBox.textContent = text;
-            errorBox.classList.add('show');
-        }
-        function clearError() {
-            errorBox.classList.remove('show');
-        }
-
-        function flashSaved() {
-            savedBadge.classList.add('show');
-            clearTimeout(saveTimer);
-            saveTimer = setTimeout(() => savedBadge.classList.remove('show'), 1400);
-        }
-
-        function save() {
-            try {
-                localStorage.setItem(LS_CODE, code.value);
-                flashSaved();
-            } catch (e) { /* quota/private mode — silent */ }
-        }
-
-        // 図種を推定（表示用のみ）
-        function detectType(src) {
-            let s = src.replace(/^\s*@start\w+.*$/im, m => m)  // keep
-                       .replace(/'.*$/gm, '');                  // line comments
-            const m = s.match(/@start(\w+)/i);
-            const kind = m ? m[1].toLowerCase() : 'uml';
-            const nonUml = {
-                mindmap: 'マインドマップ', gantt: 'ガント図', salt: 'GUIモック',
-                json: 'JSON', yaml: 'YAML', wbs: 'WBS', ditaa: 'ditaa',
-                math: '数式', latex: 'LaTeX', ebnf: 'EBNF', regex: '正規表現'
-            };
-            if (kind !== 'uml' && nonUml[kind]) return nonUml[kind];
-
-            const body = s;
-            if (/left to right direction|usecase\b|\bactor\b[\s\S]*\(.+\)/i.test(body) && /\(.+\)/.test(body)) return 'ユースケース図';
-            if (/\bnode\b|\bartifact\b|\bcloud\b/i.test(body)) return '配置図';
-            if (/\bentity\b/i.test(body)) return 'ER図';
-            if (/\bobject\b/i.test(body)) return 'オブジェクト図';
-            if (/\bclass\b|<\|--|\*--|o--|\.\.\|>/i.test(body)) return 'クラス図';
-            if (/\[\*\]|\bstate\b/i.test(body)) return '状態遷移図';
-            if (/\bstart\b[\s\S]*\bstop\b|^\s*:.*;|\bif\s*\(.*\)\s*then\b/im.test(body)) return 'アクティビティ図';
-            if (/\bcomponent\b|\[[^\]]+\]\s*-+>|\[[^\]]+\]\s*\.\./.test(body)) return 'コンポーネント図';
-            if (/participant|\bactor\b|->|-->/i.test(body)) return 'シーケンス図';
-            return 'UML図';
-        }
-
-        function updateMeta() {
-            const v = code.value;
-            const lines = v ? v.split('\n').length : 0;
-            countLabel.textContent = `${lines} 行 / ${v.length} 文字`;
-            const t = v.trim() ? detectType(v) : '';
-            typeLabel.textContent = t ? `種別: ${t}` : '—';
-        }
-
-        /* ============================================================
-         * Viewport (pan & zoom)
-         * ============================================================ */
-        function applyTransform() {
-            viewport.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
-            zoomLevel.textContent = Math.round(scale * 100) + '%';
-        }
-
-        function contentSize() {
-            const r = output.getBoundingClientRect();
-            return { w: r.width / scale, h: r.height / scale };
-        }
-
-        function fitView() {
-            if (!output.firstChild) return;
-            const { w, h } = contentSize();
-            if (!w || !h) return;
-            const pad = 32;
-            const aw = previewArea.clientWidth - pad * 2;
-            const ah = previewArea.clientHeight - pad * 2;
-            scale = Math.max(0.1, Math.min(aw / w, ah / h, 1.6));
-            const cw = w * scale, ch = h * scale;
-            tx = Math.max(pad, (previewArea.clientWidth - cw) / 2);
-            ty = Math.max(pad, (previewArea.clientHeight - ch) / 2);
-            applyTransform();
-        }
-
-        function zoomAt(factor, cx, cy) {
-            const newScale = Math.max(0.1, Math.min(8, scale * factor));
-            const k = newScale / scale;
-            tx = cx - (cx - tx) * k;
-            ty = cy - (cy - ty) * k;
-            scale = newScale;
-            applyTransform();
-        }
-
-        previewArea.addEventListener('wheel', e => {
-            if (!output.firstChild) return;
-            e.preventDefault();
-            const rect = previewArea.getBoundingClientRect();
-            const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-            zoomAt(factor, e.clientX - rect.left, e.clientY - rect.top);
-        }, { passive: false });
-
-        let dragging = false, lastX = 0, lastY = 0, pointerId = null;
-        previewArea.addEventListener('pointerdown', e => {
-            if (!output.firstChild) return;
-            dragging = true; pointerId = e.pointerId;
-            lastX = e.clientX; lastY = e.clientY;
-            viewport.classList.add('grabbing');
-            previewArea.setPointerCapture(e.pointerId);
-        });
-        previewArea.addEventListener('pointermove', e => {
-            if (!dragging || e.pointerId !== pointerId) return;
-            tx += e.clientX - lastX; ty += e.clientY - lastY;
-            lastX = e.clientX; lastY = e.clientY;
-            applyTransform();
-        });
-        function endDrag(e) {
-            if (e.pointerId !== pointerId) return;
-            dragging = false; viewport.classList.remove('grabbing');
-            try { previewArea.releasePointerCapture(e.pointerId); } catch (_) {}
-        }
-        previewArea.addEventListener('pointerup', endDrag);
-        previewArea.addEventListener('pointercancel', endDrag);
-
-        $('zoomIn').onclick = () => zoomAt(1.2, previewArea.clientWidth / 2, previewArea.clientHeight / 2);
-        $('zoomOut').onclick = () => zoomAt(1 / 1.2, previewArea.clientWidth / 2, previewArea.clientHeight / 2);
-        $('zoomFit').onclick = fitView;
-
-        /* ============================================================
-         * Render (PlantUMLサーバーへ問い合わせ)
-         * ============================================================ */
-        function measureSvg(svgEl) {
-            let w = 0, h = 0;
-            const vb = svgEl.viewBox && svgEl.viewBox.baseVal;
-            if (vb && vb.width) { w = vb.width; h = vb.height; }
-            if (!w) {
-                try { const b = svgEl.getBBox(); w = b.width; h = b.height; } catch (_) {}
-            }
-            if (!w) { w = parseFloat(svgEl.getAttribute('width')) || 800; h = parseFloat(svgEl.getAttribute('height')) || 600; }
-            return { w: Math.ceil(w), h: Math.ceil(h) };
-        }
-
-        // PlantUMLエラーSVGからメッセージらしき行を抽出
-        function extractError(svgText) {
-            const texts = [...svgText.matchAll(/<text[^>]*>([\s\S]*?)<\/text>/g)].map(m =>
-                m[1].replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').trim()
-            ).filter(Boolean);
-            return texts.slice(0, 8).join('\n');
-        }
-
-        function disableExports() {
-            svgBtn.disabled = pngBtn.disabled = copyImgBtn.disabled = true;
-        }
-
-        async function render() {
-            const src = code.value.trim();
-            clearError();
-
-            if (!src) {
-                output.innerHTML = '';
-                hasSvg = false;
-                viewport.classList.remove('grabbable');
-                emptyState.classList.remove('hidden');
-                disableExports();
-                setStatus('', '空');
-                return;
-            }
-
-            const token = ++renderToken;
-            spinner.classList.add('show');
-
-            const urls = buildUrls(src, 'svg');
-            let svgText = null, lastErr = null, errorResponse = false;
-
-            for (const url of urls) {
-                try {
-                    const res = await fetch(url, { mode: 'cors' });
-                    const body = await res.text();
-                    if (token !== renderToken) return; // 競合した古い描画は破棄
-                    if (!res.ok) {
-                        // PlantUMLは構文エラー時 HTTP 400 + エラーSVGを返す
-                        lastErr = new Error('HTTP ' + res.status);
-                        if (/<svg/i.test(body)) { svgText = body; errorResponse = true; }
-                        continue;
-                    }
-                    if (!/<svg/i.test(body)) { lastErr = new Error('SVGを取得できませんでした'); continue; }
-                    svgText = body; errorResponse = false;
-                    break;
-                } catch (e) {
-                    if (token !== renderToken) return;
-                    lastErr = e;
-                }
-            }
-
-            if (token !== renderToken) return;
-            spinner.classList.remove('show');
-
-            // どのサーバーにも到達できなかった場合は <img> フォールバックを試す
-            if (!svgText) {
-                spinner.classList.remove('show');
-                renderViaImg(src, token, lastErr);
-                return;
-            }
-
-            // SVGを表示
-            output.innerHTML = svgText;
-            const svgEl = output.querySelector('svg');
-            if (!svgEl) {
-                showError('レンダリングエラー: SVGを生成できませんでした');
-                setStatus('bad', 'エラー');
-                hasSvg = false; disableExports();
-                return;
-            }
-
-            const size = measureSvg(svgEl);
-            naturalW = size.w; naturalH = size.h;
-            svgEl.removeAttribute('style');
-            svgEl.setAttribute('width', naturalW);
-            svgEl.setAttribute('height', naturalH);
-
-            emptyState.classList.add('hidden');
-            viewport.classList.add('grabbable');
-            hasSvg = true;
-            fitView();
-
-            if (errorResponse) {
-                const detail = extractError(svgText) || '構文エラー';
-                showError('構文エラー:\n' + detail);
-                setStatus('bad', '構文エラー');
-                // エラーSVGは表示するが書き出しは無効化
-                disableExports();
-            } else {
-                svgBtn.disabled = pngBtn.disabled = false;
-                copyImgBtn.disabled = !(navigator.clipboard && window.ClipboardItem);
-                setStatus('ok', detectType(src) || 'OK');
-            }
-        }
-
-        // CORS/ネットワークでfetch不可のときの表示専用フォールバック
-        function renderViaImg(src, token, lastErr) {
-            const urls = buildUrls(src, 'svg');
-            if (!urls.length) {
-                showError('サーバーに接続できませんでした: ' + (lastErr ? lastErr.message : '不明'));
-                setStatus('bad', '接続エラー'); disableExports(); return;
-            }
+    $('svgBtn').onclick = () => {
+        if (!state.nodes.length) return toast('図がありません', true);
+        download(new Blob([buildSVG()], { type: 'image/svg+xml;charset=utf-8' }), tsName('svg'));
+        toast('SVGを保存しました');
+    };
+    function svgToPng(scaleFactor) {
+        return new Promise((resolve, reject) => {
+            const b = bbox(), pad = 24, W = Math.ceil(b.w + pad * 2), H = Math.ceil(b.h + pad * 2);
+            const url = URL.createObjectURL(new Blob([buildSVG()], { type: 'image/svg+xml;charset=utf-8' }));
             const img = new Image();
             img.onload = () => {
-                if (token !== renderToken) return;
-                output.innerHTML = '';
-                output.appendChild(img);
-                naturalW = img.naturalWidth || 800;
-                naturalH = img.naturalHeight || 600;
-                emptyState.classList.add('hidden');
-                viewport.classList.add('grabbable');
-                hasSvg = false;
-                fitView();
-                setStatus('ok', detectType(src) || 'OK');
-                // SVG DOMが無いため書き出しは不可（CORS未対応サーバー）
-                disableExports();
-                showError('プレビューは表示できましたが、このサーバーはブラウザからの直接取得(CORS)に対応していないため SVG/PNG 書き出しは利用できません。');
+                try {
+                    const c = document.createElement('canvas');
+                    c.width = Math.max(1, Math.round(W * scaleFactor)); c.height = Math.max(1, Math.round(H * scaleFactor));
+                    const ctx = c.getContext('2d');
+                    ctx.fillStyle = cssVar('--canvas-bg'); ctx.fillRect(0, 0, c.width, c.height);
+                    ctx.drawImage(img, 0, 0, c.width, c.height);
+                    c.toBlob(bl => { URL.revokeObjectURL(url); bl ? resolve(bl) : reject(new Error('PNG変換失敗')); }, 'image/png');
+                } catch (err) { URL.revokeObjectURL(url); reject(err); }
             };
-            img.onerror = () => {
-                if (token !== renderToken) return;
-                showError('サーバーに接続できませんでした: ' + (lastErr ? lastErr.message : 'ネットワークエラー'));
-                setStatus('bad', '接続エラー'); disableExports();
-            };
-            img.src = urls[0];
-        }
-
-        /* ============================================================
-         * Export
-         * ============================================================ */
-        function serializedSVG() {
-            const svg = output.querySelector('svg');
-            if (!svg) return null;
-            const clone = svg.cloneNode(true);
-            clone.removeAttribute('style');
-            clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-            clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
-            clone.setAttribute('width', naturalW);
-            clone.setAttribute('height', naturalH);
-            if (!clone.getAttribute('viewBox')) clone.setAttribute('viewBox', `0 0 ${naturalW} ${naturalH}`);
-            return '<?xml version="1.0" encoding="UTF-8"?>\n' +
-                   new XMLSerializer().serializeToString(clone);
-        }
-
-        function download(blob, name) {
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url; a.download = name;
-            document.body.appendChild(a); a.click(); a.remove();
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
-        }
-
-        function tsName(ext) {
-            const d = new Date();
-            const p = n => String(n).padStart(2, '0');
-            return `uml-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
-        }
-
-        function svgToPngBlob(scaleFactor) {
-            return new Promise((resolve, reject) => {
-                const svgStr = serializedSVG();
-                if (!svgStr) return reject(new Error('図がありません'));
-                const url = URL.createObjectURL(new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' }));
-                const img = new Image();
-                img.onload = () => {
-                    try {
-                        const canvas = document.createElement('canvas');
-                        canvas.width = Math.max(1, Math.round(naturalW * scaleFactor));
-                        canvas.height = Math.max(1, Math.round(naturalH * scaleFactor));
-                        const ctx = canvas.getContext('2d');
-                        ctx.fillStyle = '#ffffff';
-                        ctx.fillRect(0, 0, canvas.width, canvas.height);
-                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                        canvas.toBlob(b => {
-                            URL.revokeObjectURL(url);
-                            b ? resolve(b) : reject(new Error('PNG変換に失敗しました'));
-                        }, 'image/png');
-                    } catch (err) { URL.revokeObjectURL(url); reject(err); }
-                };
-                img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('SVGの画像化に失敗しました')); };
-                img.src = url;
-            });
-        }
-
-        svgBtn.onclick = () => {
-            const s = serializedSVG();
-            if (!s) return toast('図がありません', true);
-            download(new Blob([s], { type: 'image/svg+xml;charset=utf-8' }), tsName('svg'));
-            toast('SVGを保存しました');
-        };
-
-        pngBtn.onclick = async () => {
-            try {
-                const sf = parseFloat($('scaleSelect').value) || 2;
-                const blob = await svgToPngBlob(sf);
-                download(blob, tsName('png'));
-                toast('PNGを保存しました');
-            } catch (e) { toast('PNG保存エラー: ' + e.message, true); }
-        };
-
-        copyImgBtn.onclick = async () => {
-            if (!(navigator.clipboard && window.ClipboardItem)) return toast('このブラウザは画像コピー非対応です', true);
-            try {
-                const blob = await svgToPngBlob(2);
-                await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-                toast('画像をコピーしました');
-            } catch (e) { toast('コピー失敗: ' + e.message, true); }
-        };
-
-        /* ============================================================
-         * Share via URL hash
-         * ============================================================ */
-        function encodeShare(str) { return btoa(unescape(encodeURIComponent(str))); }
-        function decodeShare(b64) { return decodeURIComponent(escape(atob(b64))); }
-
-        $('shareBtn').onclick = async () => {
-            const src = code.value.trim();
-            if (!src) return toast('共有するコードがありません', true);
-            const url = location.origin + location.pathname + '#code=' + encodeShare(src);
-            try {
-                await navigator.clipboard.writeText(url);
-                toast('共有リンクをコピーしました');
-            } catch (_) {
-                history.replaceState(null, '', '#code=' + encodeShare(src));
-                toast('URLを更新しました（アドレスバーを共有）');
-            }
-        };
-
-        /* ============================================================
-         * File import / export
-         * ============================================================ */
-        $('importBtn').onclick = () => $('fileInput').click();
-        $('fileInput').onchange = e => {
-            const file = e.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = () => {
-                code.value = reader.result;
-                save(); updateMeta(); render();
-                toast('読み込みました: ' + file.name);
-            };
-            reader.onerror = () => toast('ファイル読込に失敗しました', true);
-            reader.readAsText(file);
-            e.target.value = '';
-        };
-
-        $('exportPumlBtn').onclick = () => {
-            if (!code.value.trim()) return toast('保存するコードがありません', true);
-            download(new Blob([code.value], { type: 'text/plain;charset=utf-8' }), tsName('puml'));
-            toast('.puml を保存しました');
-        };
-
-        /* ============================================================
-         * Toolbar actions
-         * ============================================================ */
-        $('renderBtn').onclick = () => render();
-
-        $('clearBtn').onclick = () => {
-            if (!code.value || confirm('コードをクリアしますか？')) {
-                code.value = '';
-                localStorage.removeItem(LS_CODE);
-                output.innerHTML = '';
-                hasSvg = false;
-                emptyState.classList.remove('hidden');
-                viewport.classList.remove('grabbable');
-                disableExports();
-                clearError(); updateMeta(); setStatus('', '空');
-            }
-        };
-
-        $('copyCodeBtn').onclick = async () => {
-            if (!code.value) return toast('コピーするコードがありません', true);
-            try { await navigator.clipboard.writeText(code.value); toast('コードをコピーしました'); }
-            catch (_) { code.select(); document.execCommand('copy'); toast('コードをコピーしました'); }
-        };
-
-        // template select
-        const sel = $('templateSelect');
-        Object.entries(TEMPLATES).forEach(([k, [label]]) => {
-            const o = document.createElement('option');
-            o.value = k; o.textContent = label; sel.appendChild(o);
+            img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('画像化に失敗しました')); };
+            img.src = url;
         });
-        sel.onchange = () => {
-            const k = sel.value;
-            if (!k) return;
-            const insert = () => {
-                code.value = TEMPLATES[k][1];
-                save(); updateMeta(); render();
-                sel.value = '';
-            };
-            if (!code.value.trim() || confirm('現在のコードをテンプレートで置き換えますか？')) insert();
-            else sel.value = '';
-        };
+    }
+    $('pngBtn').onclick = async () => {
+        if (!state.nodes.length) return toast('図がありません', true);
+        try { download(await svgToPng(parseFloat($('scaleSelect').value) || 2), tsName('png')); toast('PNGを保存しました'); }
+        catch (e) { toast('PNG保存エラー: ' + e.message, true); }
+    };
+    $('copyImgBtn').onclick = async () => {
+        if (!state.nodes.length) return toast('図がありません', true);
+        if (!(navigator.clipboard && window.ClipboardItem)) return toast('このブラウザは画像コピー非対応です', true);
+        try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': await svgToPng(2) })]); toast('画像をコピーしました'); }
+        catch (e) { toast('コピー失敗: ' + e.message, true); }
+    };
 
-        /* ============================================================
-         * Theme (アプリ外観のみ。図はサーバー描画のため白背景固定)
-         * ============================================================ */
-        function applyTheme() {
-            document.documentElement.setAttribute('data-theme', theme);
-            $('themeIco').textContent = theme === 'dark' ? '☀️' : '🌙';
+    /* ============================================================
+     * JSON save / load / share
+     * ============================================================ */
+    $('exportJsonBtn').onclick = () => {
+        if (!state.nodes.length) return toast('保存する図がありません', true);
+        download(new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' }), tsName('json'));
+        toast('JSONを保存しました');
+    };
+    $('importBtn').onclick = () => $('fileInput').click();
+    $('fileInput').onchange = e => {
+        const f = e.target.files[0]; if (!f) return;
+        const rd = new FileReader();
+        rd.onload = () => { try { loadState(JSON.parse(rd.result)); toast('読み込みました: ' + f.name); } catch (_) { toast('JSONの読込に失敗しました', true); } };
+        rd.readAsText(f); e.target.value = '';
+    };
+    $('shareBtn').onclick = async () => {
+        if (!state.nodes.length) return toast('共有する図がありません', true);
+        const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(state))));
+        const url = location.origin + location.pathname + '#d=' + b64;
+        try { await navigator.clipboard.writeText(url); toast('共有リンクをコピーしました'); }
+        catch (_) { history.replaceState(null, '', '#d=' + b64); toast('URLを更新しました'); }
+    };
+
+    function loadState(obj) {
+        if (!obj || !Array.isArray(obj.nodes)) throw new Error('bad');
+        commit();
+        state = { nodes: obj.nodes, edges: Array.isArray(obj.edges) ? obj.edges : [] };
+        // id重複回避用にseqを更新
+        let mx = 0;
+        state.nodes.concat(state.edges).forEach(o => { const m = /(\d+)$/.exec(o.id || ''); if (m) mx = Math.max(mx, +m[1]); });
+        seq = mx + 1;
+        selection = null; render(); renderPanel(); fitView(); save();
+    }
+
+    /* ============================================================
+     * Templates
+     * ============================================================ */
+    const TEMPLATES = {
+        inherit: ['継承の例', () => {
+            const a = mkNode('n1', 80, 60, 'Animal', 'abstract', ['# name: String', '# age: int'], ['+ eat(): void', '+ sleep(): void']);
+            const d = mkNode('n2', 30, 280, 'Dog', '', ['+ breed: String'], ['+ bark(): void']);
+            const c = mkNode('n3', 250, 280, 'Cat', '', ['+ color: String'], ['+ meow(): void']);
+            return { nodes: [a, d, c], edges: [
+                mkEdge('e1', 'n2', 'n1', 'inheritance'),
+                mkEdge('e2', 'n3', 'n1', 'inheritance')
+            ] };
+        }],
+        interface: ['インタフェース実現', () => {
+            const i = mkNode('n1', 120, 60, 'Repository', 'interface', [], ['+ save(e: Entity): void', '+ findById(id): Entity']);
+            const u = mkNode('n2', 100, 300, 'UserRepository', '', ['- db: Database'], ['+ save(e: Entity): void', '+ findById(id): Entity']);
+            return { nodes: [i, u], edges: [mkEdge('e1', 'n2', 'n1', 'realization')] };
+        }],
+        composition: ['集約・合成', () => {
+            const car = mkNode('n1', 60, 60, 'Car', '', ['- vin: String'], ['+ start(): void']);
+            const eng = mkNode('n2', 60, 280, 'Engine', '', ['- power: int'], []);
+            const wh = mkNode('n3', 300, 280, 'Wheel', '', ['- size: int'], []);
+            return { nodes: [car, eng, wh], edges: [
+                Object.assign(mkEdge('e1', 'n1', 'n2', 'composition'), { toMult: '1' }),
+                Object.assign(mkEdge('e2', 'n1', 'n3', 'aggregation'), { toMult: '4' })
+            ] };
+        }],
+        mvc: ['MVC', () => {
+            const m = mkNode('n1', 60, 60, 'Model', '', ['- data: Object'], ['+ getData(): Object', '+ setData(d): void']);
+            const v = mkNode('n2', 320, 60, 'View', '', [], ['+ render(): void']);
+            const c = mkNode('n3', 190, 280, 'Controller', '', ['- model: Model', '- view: View'], ['+ handle(req): void']);
+            return { nodes: [m, v, c], edges: [
+                Object.assign(mkEdge('e1', 'n3', 'n1', 'directed'), { label: 'updates' }),
+                Object.assign(mkEdge('e2', 'n3', 'n2', 'directed'), { label: 'selects' }),
+                Object.assign(mkEdge('e3', 'n2', 'n1', 'dependency'), { label: 'observes' })
+            ] };
+        }]
+    };
+    function mkNode(id, x, y, name, stereotype, attributes, methods) { return { id, x, y, name, stereotype, attributes, methods }; }
+    function mkEdge(id, from, to, type) { return { id, from, to, type, fromMult: '', toMult: '', label: '' }; }
+
+    const tsel = $('templateSelect');
+    Object.entries(TEMPLATES).forEach(([k, [label]]) => { const o = document.createElement('option'); o.value = k; o.textContent = label; tsel.append(o); });
+    tsel.onchange = () => {
+        const k = tsel.value; if (!k) return;
+        if (state.nodes.length && !confirm('現在の図をテンプレートで置き換えますか？')) { tsel.value = ''; return; }
+        loadState(TEMPLATES[k][1]());
+        tsel.value = '';
+    };
+
+    /* ============================================================
+     * UI helpers
+     * ============================================================ */
+    function toast(t, err) {
+        const host = $('toastHost'), el = document.createElement('div');
+        el.className = 'toast' + (err ? ' err' : ''); el.textContent = t; host.append(el);
+        requestAnimationFrame(() => el.classList.add('show'));
+        setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 250); }, err ? 4000 : 2000);
+    }
+    function setStatus(s, t) { const p = $('statusPill'); p.classList.toggle('ok', s === 'ok'); $('statusText').textContent = t; }
+    let saveTimer;
+    function save() {
+        try { localStorage.setItem(LS_KEY, JSON.stringify(state)); } catch (_) {}
+        const b = $('savedBadge'); b.classList.add('show'); clearTimeout(saveTimer); saveTimer = setTimeout(() => b.classList.remove('show'), 1200);
+        $('undoBtn').disabled = !history.length; $('redoBtn').disabled = !future.length;
+    }
+
+    /* ---- theme ---- */
+    function applyTheme() { document.documentElement.setAttribute('data-theme', theme); $('themeIco').textContent = theme === 'dark' ? '☀️' : '🌙'; }
+    $('themeBtn').onclick = () => { theme = theme === 'dark' ? 'light' : 'dark'; localStorage.setItem(LS_THEME, theme); applyTheme(); render(); };
+    applyTheme();
+
+    /* ---- help ---- */
+    $('helpBtn').onclick = () => alert([
+        'UMLクラス図エディタ — 使い方',
+        '',
+        '【操作】',
+        '  ・ツール「クラス追加」→ キャンバスをクリックでクラスを配置',
+        '  ・空白をダブルクリックでもクラスを追加',
+        '  ・関連線ツール（関連/誘導/継承/実現/依存/集約/合成）を選び、',
+        '    ノードからノードへドラッグして接続',
+        '  ・選択ツールでクラスをドラッグして移動',
+        '  ・右下のプロパティで名前・属性・操作・多重度を編集',
+        '',
+        '【ショートカット】',
+        '  Delete / Backspace … 選択を削除',
+        '  Ctrl/Cmd + Z … 元に戻す / Shift+Z でやり直し',
+        '  Shift + F … 全体表示',
+        '  V クラス追加=C 選択=ESC',
+        '  ホイール … 拡大縮小 / 空白ドラッグ … 画面移動',
+        '',
+        '【特長】',
+        '  ・完全オフライン動作（サーバー・外部ライブラリ不要）',
+        '  ・SVG / PNG（最大4x）書き出し・画像コピー',
+        '  ・JSON 保存/読込・共有リンク・自動保存'
+    ].join('\n'));
+
+    /* ---- keyboard ---- */
+    document.addEventListener('keydown', e => {
+        const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
+        if (typing) return;
+        if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelection(); }
+        else if (e.key === 'Escape') { setMode('select'); select(null); }
+        else if (e.key === 'c' || e.key === 'C') setMode('class');
+        else if (e.key === 'v' || e.key === 'V') setMode('select');
+        else if ((e.key === 'f' || e.key === 'F') && e.shiftKey) { e.preventDefault(); fitView(); }
+    });
+
+    /* ---- divider ---- */
+    (() => {
+        const divider = $('divider'), side = document.querySelector('.side'), main = document.querySelector('.main');
+        let active = false;
+        divider.addEventListener('pointerdown', e => { active = true; divider.classList.add('active'); divider.setPointerCapture(e.pointerId); document.body.style.userSelect = 'none'; });
+        divider.addEventListener('pointermove', e => {
+            if (!active) return;
+            const rect = main.getBoundingClientRect();
+            side.style.flex = `0 0 ${Math.max(220, Math.min(460, e.clientX - rect.left))}px`;
+        });
+        divider.addEventListener('pointerup', e => { active = false; divider.classList.remove('active'); document.body.style.userSelect = ''; try { divider.releasePointerCapture(e.pointerId); } catch (_) {} });
+    })();
+    window.addEventListener('resize', () => applyView());
+
+    /* ============================================================
+     * Init
+     * ============================================================ */
+    (function init() {
+        let loaded = null;
+        const m = location.hash.match(/#d=(.+)/);
+        if (m) { try { loaded = JSON.parse(decodeURIComponent(escape(atob(m[1])))); } catch (_) {} }
+        if (!loaded) { try { const s = localStorage.getItem(LS_KEY); if (s) loaded = JSON.parse(s); } catch (_) {} }
+        if (loaded && Array.isArray(loaded.nodes) && loaded.nodes.length) {
+            state = { nodes: loaded.nodes, edges: Array.isArray(loaded.edges) ? loaded.edges : [] };
+            let mx = 0; state.nodes.concat(state.edges).forEach(o => { const mm = /(\d+)$/.exec(o.id || ''); if (mm) mx = Math.max(mx, +mm[1]); }); seq = mx + 1;
+        } else {
+            state = TEMPLATES.inherit[1]();
+            seq = 10;
         }
-        $('themeBtn').onclick = () => {
-            theme = theme === 'dark' ? 'light' : 'dark';
-            localStorage.setItem(LS_THEME, theme);
-            applyTheme();
-        };
-        applyTheme();
-
-        /* ============================================================
-         * Help
-         * ============================================================ */
-        $('helpBtn').onclick = () => {
-            alert([
-                'UML図エディタ (PlantUML) — 使い方',
-                '',
-                '【ショートカット】',
-                '  Ctrl/Cmd + Enter … レンダリング実行',
-                '  Tab … インデント挿入',
-                '  Shift + F … 全体表示',
-                '  マウスホイール … 拡大縮小',
-                '  ドラッグ … 図の移動（パン）',
-                '',
-                '【機能】',
-                '  ・クラス図/シーケンス図/ユースケース図/アクティビティ図/',
-                '    状態遷移図/コンポーネント図/配置図/オブジェクト図 ほか',
-                '  ・入力は自動保存（ブラウザ内）',
-                '  ・SVG / PNG（最大4x）書き出し',
-                '  ・画像をクリップボードへコピー',
-                '  ・🔗 共有リンク（コードをURLに埋め込み）',
-                '  ・📂/💾 .puml ファイルの読込・保存',
-                '',
-                '【描画について】',
-                '  PlantUML公式サーバーで図を生成します（要インターネット接続）。',
-                '  @startuml が無い場合は自動で補完します。'
-            ].join('\n'));
-        };
-
-        /* ============================================================
-         * Editor events
-         * ============================================================ */
-        code.addEventListener('keydown', e => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); render(); }
-            if (e.key === 'Tab') {
-                e.preventDefault();
-                const s = code.selectionStart, en = code.selectionEnd;
-                code.value = code.value.slice(0, s) + '    ' + code.value.slice(en);
-                code.selectionStart = code.selectionEnd = s + 4;
-                updateMeta();
-            }
-        });
-
-        code.addEventListener('input', () => {
-            save(); updateMeta();
-            clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => render(), 800);
-        });
-
-        document.addEventListener('keydown', e => {
-            if (e.shiftKey && (e.key === 'F' || e.key === 'f') && document.activeElement !== code) {
-                e.preventDefault(); fitView();
-            }
-        });
-
-        let resizeTimer;
-        window.addEventListener('resize', () => {
-            clearTimeout(resizeTimer);
-            resizeTimer = setTimeout(() => { if (output.firstChild) fitView(); }, 150);
-        });
-
-        /* ============================================================
-         * Resizable divider
-         * ============================================================ */
-        (() => {
-            const divider = $('divider');
-            const editor = document.querySelector('.editor-section');
-            const main = document.querySelector('.main');
-            let active = false;
-            divider.addEventListener('pointerdown', e => {
-                active = true; divider.classList.add('active');
-                divider.setPointerCapture(e.pointerId);
-                document.body.style.userSelect = 'none';
-            });
-            divider.addEventListener('pointermove', e => {
-                if (!active) return;
-                const rect = main.getBoundingClientRect();
-                let pct = ((e.clientX - rect.left) / rect.width) * 100;
-                pct = Math.max(25, Math.min(75, pct));
-                editor.style.flex = `0 0 ${pct}%`;
-                if (output.firstChild) fitView();
-            });
-            divider.addEventListener('pointerup', e => {
-                active = false; divider.classList.remove('active');
-                document.body.style.userSelect = '';
-                try { divider.releasePointerCapture(e.pointerId); } catch (_) {}
-            });
-        })();
-
-        /* ============================================================
-         * Init
-         * ============================================================ */
-        (function init() {
-            let initial = '';
-            const m = location.hash.match(/#code=(.+)/);
-            if (m) {
-                try { initial = decodeShare(m[1]); } catch (_) {}
-            }
-            if (!initial) {
-                try { initial = localStorage.getItem(LS_CODE) || ''; } catch (_) {}
-            }
-            if (!initial) initial = TEMPLATES.class[1];
-            code.value = initial;
-            updateMeta();
-            setStatus('', '準備完了');
-            render();
-        })();
+        setMode('select');
+        render(); renderPanel();
+        fitView();
+        setStatus('', '準備完了');
+    })();
     </script>
 </body>
 </html>
