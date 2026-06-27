@@ -237,6 +237,19 @@
         .node.selected .shape, .node.selected .pseudo-ring, .node.selected .actor-stroke, .node.selected .actor-head { stroke: var(--sel); stroke-width: 2.2; }
         .node.selected .pseudo-fill { stroke: var(--sel); stroke-width: 3; }
         .node.multi .shape, .node.multi .pseudo-ring, .node.multi .actor-stroke { stroke: var(--sel); stroke-dasharray: 5 3; }
+        /* シーケンス図 */
+        .seq-life { stroke: var(--node-stroke); stroke-width: 1.1; stroke-dasharray: 4 4; }
+        .seq-line { stroke: var(--line); stroke-width: 1.4; fill: none; }
+        .seq-line.dashed { stroke-dasharray: 7 5; }
+        .seq-arrow-filled { fill: var(--line); stroke: var(--line); stroke-width: 1.2; }
+        .seq-arrow-open { fill: none; stroke: var(--line); stroke-width: 1.4; }
+        .seq-label { fill: var(--text); font: 12px -apple-system,'Segoe UI','Noto Sans JP',sans-serif; }
+        .seq-hit { fill: transparent; stroke: none; cursor: pointer; }
+        .seq-part { cursor: grab; }
+        .seq-part.selected .shape, .seq-part.selected .actor-stroke, .seq-part.selected .actor-head { stroke: var(--sel); stroke-width: 2.2; }
+        .seq-msg.selected .seq-line { stroke: var(--sel); stroke-width: 2.4; }
+        .seq-msg.selected .seq-arrow-filled { fill: var(--sel); stroke: var(--sel); }
+        .seq-msg.selected .seq-arrow-open { stroke: var(--sel); }
 
         .canvas-empty {
             position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -286,6 +299,7 @@
                         <option value="state">状態遷移図</option>
                         <option value="usecase">ユースケース図</option>
                         <option value="component">コンポーネント図</option>
+                        <option value="sequence">シーケンス図</option>
                     </select>
                     <select class="btn" id="templateSelect" aria-label="テンプレート" style="padding:6px 9px;">
                         <option value="">テンプレート…</option>
@@ -385,7 +399,11 @@
         // 他図種用
         transition:  { label: '遷移',  dash: false, start: 'none',         end: 'open' },
         include:     { label: '«include»', dash: true,  start: 'none',     end: 'open' },
-        extend:      { label: '«extend»',  dash: true,  start: 'none',     end: 'open' }
+        extend:      { label: '«extend»',  dash: true,  start: 'none',     end: 'open' },
+        // シーケンス図のメッセージ
+        sync:        { label: '同期',  dash: false, start: 'none',         end: 'open' },
+        async:       { label: '非同期', dash: false, start: 'none',        end: 'open' },
+        reply:       { label: '応答(返り)', dash: true, start: 'none',      end: 'open' }
     };
     const DEFAULT_EDGE_LABEL = { include: '«include»', extend: '«extend»' };
 
@@ -402,15 +420,25 @@
             rels: ['association', 'directed', 'include', 'extend', 'inheritance'] },
         component: { label: 'コンポーネント図',
             nodes: [{ kind: 'component', label: 'コンポーネント' }, { kind: 'interface', label: 'インタフェース' }, { kind: 'boundary', label: '境界' }],
-            rels: ['dependency', 'association', 'directed'] }
+            rels: ['dependency', 'association', 'directed'] },
+        sequence: { label: 'シーケンス図',
+            nodes: [{ kind: 'participant', label: 'ライフライン' }, { kind: 'actor', label: 'アクター' }],
+            rels: ['sync', 'async', 'reply'] }
     };
-    const NODE_LABEL = { class: 'クラス', state: '状態', initial: '開始', final: '終了', actor: 'アクター', usecase: 'ユースケース', boundary: '境界', component: 'コンポーネント', interface: 'インタフェース' };
+    const NODE_LABEL = { class: 'クラス', state: '状態', initial: '開始', final: '終了', actor: 'アクター', usecase: 'ユースケース', boundary: '境界', component: 'コンポーネント', interface: 'インタフェース', participant: 'ライフライン' };
     const TOOL_LABEL = { select: '選択' };
 
     // パレット用の小さなプレビューSVG（ツールid: 'select' / 'add:<kind>' / 'rel:<type>'）
     function toolGlyph(t) {
         if (t === 'select') return '<svg viewBox="0 0 26 16"><path d="M5 2 L5 13 L8 10 L10 14 L12 13 L10 9 L14 9 Z" fill="currentColor" stroke="currentColor" stroke-width="1"/></svg>';
         if (t.startsWith('add:')) return nodeGlyph(t.slice(4));
+        const id = t.slice(4);
+        if (id === 'sync' || id === 'async' || id === 'reply') {
+            const dash = id === 'reply' ? 'stroke-dasharray="3 2"' : '';
+            let s = `<svg viewBox="0 0 26 16"><line x1="3" y1="8" x2="20" y2="8" stroke="currentColor" stroke-width="1.3" ${dash}/>`;
+            s += id === 'sync' ? '<path d="M21 8 L14 5 L14 11 Z" fill="currentColor"/>' : '<path d="M21 8 L15 5 M21 8 L15 11" stroke="currentColor" stroke-width="1.3" fill="none"/>';
+            return s + '</svg>';
+        }
         const r = REL[t.slice(4)];
         const dash = r.dash ? 'stroke-dasharray="3 2"' : '';
         let s = `<svg viewBox="0 0 26 16"><line x1="3" y1="8" x2="20" y2="8" stroke="currentColor" stroke-width="1.3" ${dash}/>`;
@@ -432,6 +460,7 @@
             case 'boundary': return `<svg viewBox="0 0 26 16"><rect x="3" y="2" width="20" height="12" rx="1" stroke="currentColor" stroke-width="1.3" fill="none" stroke-dasharray="3 2"/></svg>`;
             case 'component': return `<svg viewBox="0 0 26 16"><rect x="5" y="3" width="16" height="10" ${w}/><rect x="3" y="5" width="4" height="2.4" ${w}/><rect x="3" y="9" width="4" height="2.4" ${w}/></svg>`;
             case 'interface': return `<svg viewBox="0 0 26 16"><circle cx="13" cy="8" r="5" ${w}/></svg>`;
+            case 'participant': return `<svg viewBox="0 0 26 16"><rect x="7" y="1" width="12" height="6" ${w}/><line x1="13" y1="7" x2="13" y2="15" stroke="currentColor" stroke-width="1.1" stroke-dasharray="2 2"/></svg>`;
         }
         return `<svg viewBox="0 0 26 16"><rect x="4" y="3" width="18" height="10" ${w}/></svg>`;
     }
@@ -441,10 +470,12 @@
     /* ============================================================
      * State / Project（図種ごとに独立したダイアグラムを保持）
      * ============================================================ */
-    function emptyDiagram() { return { nodes: [], edges: [] }; }
-    let project = { type: 'class', diagrams: { class: emptyDiagram(), state: emptyDiagram(), usecase: emptyDiagram(), component: emptyDiagram() } };
+    function emptyDiagramFor(t) { return t === 'sequence' ? { participants: [], messages: [] } : { nodes: [], edges: [] }; }
+    let project = { type: 'class', diagrams: {} };
+    for (const t in { class: 1, state: 1, usecase: 1, component: 1, sequence: 1 }) project.diagrams[t] = emptyDiagramFor(t);
     let state = project.diagrams.class;   // アクティブなダイアグラム
     function diagramType() { return project.type; }
+    function isSeq() { return project.type === 'sequence'; }
     let selection = null;          // {kind:'node'|'edge', id}  ← プロパティ表示用の主選択
     let selNodes = new Set();      // 複数選択中のノードid
     let clipboard = null;          // コピーしたノード群
@@ -515,6 +546,7 @@
     }
 
     function render() {
+        if (isSeq()) return renderSequence();
         state.nodes.forEach(layoutNode);
         // edges first (under nodes)
         const ef = document.createDocumentFragment();
@@ -682,6 +714,157 @@
     }
 
     /* ============================================================
+     * シーケンス図エンジン（時間軸ベース）
+     * ============================================================ */
+    const SEQ = { headTop: 20, headH: 42, gap: 70, firstMsg: 40, rowGap: 46, selfW: 42 };
+    function seqLayout() {
+        const ps = state.participants || [], msgs = state.messages || [];
+        const titleFont = "600 13px " + FONT;
+        const cx = new Map(), boxW = new Map();
+        let prevX = null, prevHalf = 0;
+        ps.forEach((p, i) => {
+            const w = Math.max(84, Math.ceil(measure(p.name || 'Object', titleFont)) + 24);
+            boxW.set(p.id, w);
+            const x = i === 0 ? 40 + w / 2 : prevX + prevHalf + SEQ.gap + w / 2;
+            cx.set(p.id, x); prevX = x; prevHalf = w / 2;
+        });
+        const lifeTop = SEQ.headTop + SEQ.headH;
+        const firstMsgY = lifeTop + SEQ.firstMsg;
+        const bottomY = firstMsgY + Math.max(1, msgs.length) * SEQ.rowGap + 10;
+        let minX = Infinity, maxX = -Infinity;
+        ps.forEach(p => { const x = cx.get(p.id), w = boxW.get(p.id); minX = Math.min(minX, x - w / 2); maxX = Math.max(maxX, x + w / 2 + (msgs.some(m => m.from === p.id && m.to === p.id) ? SEQ.selfW : 0)); });
+        if (!ps.length) { minX = 0; maxX = 200; }
+        return { ps, msgs, cx, boxW, lifeTop, firstMsgY, bottomY, minX, maxX };
+    }
+
+    function seqArrow(x, y, dir, type) {
+        const L = 11, W = 4;
+        if (type === 'sync') return el('path', { class: 'seq-arrow-filled', d: `M${x},${y} L${x - dir * L},${y - W} L${x - dir * L},${y + W} Z` });
+        return el('path', { class: 'seq-arrow-open', d: `M${x - dir * L},${y - W} L${x},${y} L${x - dir * L},${y + W}` });
+    }
+
+    function seqActorHead(g, x, top, name) {
+        const cyh = top + 7;
+        g.append(el('circle', { class: 'actor-head', cx: x, cy: cyh, r: 6 }));
+        g.append(el('line', { class: 'actor-stroke', x1: x, y1: cyh + 6, x2: x, y2: top + 28 }));
+        g.append(el('line', { class: 'actor-stroke', x1: x - 10, y1: top + 18, x2: x + 10, y2: top + 18 }));
+        g.append(el('line', { class: 'actor-stroke', x1: x, y1: top + 28, x2: x - 9, y2: top + 40 }));
+        g.append(el('line', { class: 'actor-stroke', x1: x, y1: top + 28, x2: x + 9, y2: top + 40 }));
+    }
+
+    function renderSequence() {
+        const L = seqLayout();
+        const frag = document.createDocumentFragment();
+        // ライフライン + ヘッダ
+        for (const p of L.ps) {
+            const x = L.cx.get(p.id), w = L.boxW.get(p.id);
+            const g = el('g', { class: 'seq-part' + (isSel('part', p.id) ? ' selected' : '') });
+            g.dataset.part = p.id;
+            g.append(el('line', { class: 'seq-life', x1: x, y1: L.lifeTop, x2: x, y2: L.bottomY }));
+            if (p.kind === 'actor') {
+                seqActorHead(g, x, SEQ.headTop, p.name);
+                g.append(text(x, SEQ.headTop + SEQ.headH - 1, p.name || 'Actor', 'node-title', 'middle'));
+            } else {
+                g.append(el('rect', { class: 'shape', x: x - w / 2, y: SEQ.headTop, width: w, height: SEQ.headH, rx: 3 }));
+                g.append(text(x, SEQ.headTop + SEQ.headH / 2 + 4, p.name || 'Object', 'node-title', 'middle'));
+            }
+            g.append(el('rect', { class: 'seq-hit', x: x - w / 2, y: SEQ.headTop, width: w, height: SEQ.headH }));
+            frag.append(g);
+        }
+        // メッセージ（時間順に上から）
+        L.msgs.forEach((m, i) => {
+            const xa = L.cx.get(m.from), xb = L.cx.get(m.to);
+            if (xa == null || xb == null) return;
+            const y = L.firstMsgY + i * SEQ.rowGap;
+            const g = el('g', { class: 'seq-msg' + (isSel('msg', m.id) ? ' selected' : '') });
+            g.dataset.msg = m.id;
+            const dashed = m.type === 'reply' ? ' dashed' : '';
+            if (m.from === m.to) {                        // 自己メッセージ
+                const dy = SEQ.rowGap * 0.5;
+                g.append(el('path', { class: 'seq-line' + dashed, d: `M${xa},${y} h${SEQ.selfW} v${dy} h${-SEQ.selfW}` }));
+                g.append(seqArrow(xa, y + dy, -1, m.type));
+                g.append(text(xa + SEQ.selfW + 6, y - 3, m.text || '', 'seq-label', 'start'));
+            } else {
+                const dir = xb > xa ? 1 : -1;
+                g.append(el('line', { class: 'seq-line' + dashed, x1: xa, y1: y, x2: xb, y2: y }));
+                g.append(seqArrow(xb, y, dir, m.type));
+                g.append(text((xa + xb) / 2, y - 6, m.text || '', 'seq-label', 'middle'));
+            }
+            const hx1 = Math.min(xa, xb) - 12, hx2 = Math.max(xa, xb) + 12;
+            g.append(el('rect', { class: 'seq-hit', x: hx1, y: y - SEQ.rowGap / 2, width: hx2 - hx1, height: SEQ.rowGap }));
+            frag.append(g);
+        });
+        edgesLayer.replaceChildren();
+        nodesLayer.replaceChildren(frag);
+        applyView();
+        $('emptyState').classList.toggle('hidden', L.ps.length > 0);
+        $('countLabel').textContent = `${L.ps.length} ライフライン / ${L.msgs.length} メッセージ`;
+        $('undoBtn').disabled = !history.length; $('redoBtn').disabled = !future.length;
+    }
+
+    function nearestParticipant(px) {
+        const L = seqLayout(); let best = null, bd = Infinity;
+        for (const p of L.ps) { const d = Math.abs(L.cx.get(p.id) - px); if (d < bd) { bd = d; best = p.id; } }
+        return bd < 90 ? best : null;
+    }
+    function createParticipant(kind) {
+        commit();
+        const n = (state.participants.length) + 1;
+        const p = { id: uid('p'), kind, name: kind === 'actor' ? 'Actor' : 'Object' + n };
+        state.participants.push(p);
+        setMode('select'); select('part', p.id);
+        render(); save();
+        const f = $('f_name'); if (f) { f.focus(); f.select(); }
+    }
+    function addMessage(from, to, type) {
+        commit();
+        const m = { id: uid('m'), from, to, type, text: '' };
+        state.messages.push(m);
+        setMode('select'); select('msg', m.id);
+        render(); save();
+    }
+    function moveItem(arr, id, dir) {
+        const i = arr.findIndex(o => o.id === id); if (i < 0) return;
+        const j = i + dir; if (j < 0 || j >= arr.length) return;
+        commit(); [arr[i], arr[j]] = [arr[j], arr[i]]; render(); renderPanel(); save();
+    }
+
+    function seqPointerDown(e) {
+        const partEl = e.target.closest('[data-part]'), msgEl = e.target.closest('[data-msg]');
+        const pt = toDiagram(e.clientX, e.clientY);
+        if (mode.startsWith('add:') && !partEl) { createParticipant(mode.slice(4)); return; }
+        if (mode.startsWith('rel:')) {
+            if (partEl) {
+                const x = seqLayout().cx.get(partEl.dataset.part);
+                drag = { kind: 'seqmsg', from: partEl.dataset.part, rel: mode.slice(4), temp: el('line', { class: 'temp-line' }) };
+                drag.temp.setAttribute('x1', x); drag.temp.setAttribute('y1', pt.y);
+                drag.temp.setAttribute('x2', pt.x); drag.temp.setAttribute('y2', pt.y);
+                overlay.append(drag.temp); canvas.setPointerCapture(e.pointerId);
+            }
+            return;
+        }
+        if (partEl) select('part', partEl.dataset.part);
+        else if (msgEl) select('msg', msgEl.dataset.msg);
+        else { select(null); drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, ox: view.tx, oy: view.ty }; canvas.setPointerCapture(e.pointerId); }
+    }
+    function seqPointerMove(e) {
+        if (!drag) return;
+        if (drag.kind === 'pan') { view.tx = drag.ox + (e.clientX - drag.sx); view.ty = drag.oy + (e.clientY - drag.sy); applyView(); }
+        else if (drag.kind === 'seqmsg') { const pt = toDiagram(e.clientX, e.clientY); drag.temp.setAttribute('x2', pt.x); drag.temp.setAttribute('y2', pt.y); }
+    }
+    function seqPointerUp(e) {
+        if (!drag) return;
+        if (drag.kind === 'seqmsg') {
+            drag.temp.remove();
+            const pt = toDiagram(e.clientX, e.clientY);
+            const target = nearestParticipant(pt.x);
+            if (target) addMessage(drag.from, target, drag.rel);
+        }
+        try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+        drag = null;
+    }
+
+    /* ============================================================
      * View transform
      * ============================================================ */
     function applyView() { viewG.setAttribute('transform', `translate(${view.tx},${view.ty}) scale(${view.s})`); $('zoomLevel').textContent = Math.round(view.s * 100) + '%'; }
@@ -701,13 +884,14 @@
     $('zoomFit').onclick = fitView;
 
     function bbox() {
+        if (isSeq()) { const L = seqLayout(); return { x: L.minX - 20, y: 0, w: (L.maxX - L.minX) + 40, h: L.bottomY + 20 }; }
         if (!state.nodes.length) return { x: 0, y: 0, w: 400, h: 300 };
         let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
         for (const n of state.nodes) { x1 = Math.min(x1, n.x); y1 = Math.min(y1, n.y); x2 = Math.max(x2, n.x + n.w); y2 = Math.max(y2, n.y + n.h); }
         return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
     }
     function fitView() {
-        state.nodes.forEach(layoutNode);
+        if (!isSeq()) state.nodes.forEach(layoutNode);
         const b = bbox(), pad = 40;
         const aw = canvas.clientWidth - pad * 2, ah = canvas.clientHeight - pad * 2;
         view.s = Math.max(0.15, Math.min(aw / b.w, ah / b.h, 1.5));
@@ -728,6 +912,7 @@
     let drag = null; // {kind, ...}
     canvas.addEventListener('pointerdown', e => {
         if (e.button !== 0) return;
+        if (isSeq()) { seqPointerDown(e); return; }
         const nodeEl = e.target.closest('[data-node]');
         const edgeEl = e.target.closest('[data-edge]');
         const pt = toDiagram(e.clientX, e.clientY);
@@ -782,6 +967,7 @@
 
     canvas.addEventListener('pointermove', e => {
         if (!drag) return;
+        if (isSeq()) { seqPointerMove(e); return; }
         if (drag.kind === 'pan') {
             view.tx = drag.ox + (e.clientX - drag.sx);
             view.ty = drag.oy + (e.clientY - drag.sy);
@@ -806,6 +992,7 @@
 
     canvas.addEventListener('pointerup', e => {
         if (!drag) return;
+        if (isSeq()) { seqPointerUp(e); return; }
         if (drag.kind === 'edge') {
             drag.temp.remove();
             const tEl = document.elementFromPoint(e.clientX, e.clientY);
@@ -830,6 +1017,7 @@
     });
 
     canvas.addEventListener('dblclick', e => {
+        if (isSeq()) { if (!e.target.closest('[data-part]')) createParticipant('participant'); return; }
         if (e.target.closest('[data-node]')) return;
         const pt = toDiagram(e.clientX, e.clientY);
         const def = DIAGRAMS[diagramType()].nodes[0];
@@ -841,6 +1029,7 @@
      * ============================================================ */
     function nodeById(id) { return state.nodes.find(n => n.id === id); }
     function edgeById(id) { return state.edges.find(e => e.id === id); }
+    function itemCount() { return isSeq() ? (state.participants || []).length : state.nodes.length; }
 
     function nodeDefaults(kind) {
         switch (kind) {
@@ -884,6 +1073,13 @@
     }
 
     function deleteSelection() {
+        if (isSeq()) {
+            if (!selection) return;
+            commit();
+            if (selection.kind === 'part') { state.participants = state.participants.filter(p => p.id !== selection.id); state.messages = state.messages.filter(m => m.from !== selection.id && m.to !== selection.id); }
+            else state.messages = state.messages.filter(m => m.id !== selection.id);
+            selection = null; render(); renderPanel(); save(); return;
+        }
         if (!selection && !selNodes.size) return;
         commit();
         if (selNodes.size) {
@@ -963,7 +1159,7 @@
     }
 
     function pasteClipboard() {
-        if (!clipboard) return;
+        if (isSeq() || !clipboard) return;
         commit();
         const idmap = new Map();
         const ns = clipboard.nodes.map(o => { const c = JSON.parse(JSON.stringify(o)); const nid = uid('n'); idmap.set(o.id, nid); c.id = nid; c.x += 28; c.y += 28; return c; });
@@ -979,6 +1175,7 @@
 
     // 有向関係でレイヤ化する簡易自動レイアウト（階層が無ければグリッド）
     function autoLayout() {
+        if (isSeq()) { toast('シーケンス図は自動配置です'); return; }
         if (!state.nodes.length) return;
         commit();
         state.nodes.forEach(layoutNode);
@@ -1050,6 +1247,7 @@
     function select(kind, id) {
         selection = kind ? { kind, id } : null;
         selNodes = kind === 'node' ? new Set([id]) : new Set();
+        if (isSeq()) { renderSequence(); renderPanel(); return; }
         refreshSelectionStyles();
         renderPanel();
     }
@@ -1060,6 +1258,7 @@
     function recordEdit() { if (editBaseline) { history.push(editBaseline); if (history.length > 120) history.shift(); future = []; editBaseline = snap(); $('undoBtn').disabled = false; } }
 
     function renderPanel() {
+        if (isSeq()) return renderSeqPanel();
         if (selNodes.size >= 2) {                  // 複数選択 → 整列パネル
             props.innerHTML = `<h3>複数選択（${selNodes.size}件）</h3>
                 <div class="field"><label>整列</label>
@@ -1150,6 +1349,52 @@
     function lines(s) { return s.split('\n').map(x => x.trimEnd()).filter(x => x.trim() !== ''); }
     function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
+    function renderSeqPanel() {
+        if (!selection) {
+            props.innerHTML = `<h3>使い方</h3><div class="empty-hint">
+                ・<b>ライフライン/アクター</b>でキャンバスをクリックして追加<br>
+                ・<b>同期/非同期/応答</b>を選び、ライフラインから別のライフラインへドラッグでメッセージ追加<br>
+                ・メッセージは上から時間順。選択して▲▼で並べ替え<br>
+                ・同じライフラインへドラッグで自己メッセージ</div>`;
+            return;
+        }
+        const delBtn = `<button class="btn danger" id="f_del" style="width:100%"><span class="ico">🗑</span> 削除</button>`;
+        if (selection.kind === 'part') {
+            const p = state.participants.find(o => o.id === selection.id); if (!p) { select(null); return; }
+            props.innerHTML = `<h3>ライフライン</h3>
+                <div class="field"><label>名前</label><input id="f_name" value="${esc(p.name)}"></div>
+                <div class="field"><label>種類</label><select id="f_kind">
+                    <option value="participant" ${p.kind !== 'actor' ? 'selected' : ''}>オブジェクト（四角）</option>
+                    <option value="actor" ${p.kind === 'actor' ? 'selected' : ''}>アクター（棒人間）</option></select></div>
+                <div class="field"><label>並び替え</label><div class="tool-grid">
+                    <button class="tool" id="f_left">◀ 左へ</button><button class="tool" id="f_right">右へ ▶</button></div></div>${delBtn}`;
+            $('f_name').oninput = () => { p.name = $('f_name').value; render(); };
+            $('f_name').addEventListener('change', () => { recordEdit(); save(); });
+            $('f_kind').onchange = () => { p.kind = $('f_kind').value; recordEdit(); render(); save(); };
+            $('f_left').onclick = () => moveItem(state.participants, p.id, -1);
+            $('f_right').onclick = () => moveItem(state.participants, p.id, 1);
+            $('f_del').onclick = deleteSelection;
+        } else {
+            const m = state.messages.find(o => o.id === selection.id); if (!m) { select(null); return; }
+            const pn = id => { const p = state.participants.find(o => o.id === id); return p ? p.name : '?'; };
+            const opts = ['sync', 'async', 'reply'].map(k => `<option value="${k}" ${k === m.type ? 'selected' : ''}>${REL[k].label}</option>`).join('');
+            props.innerHTML = `<h3>メッセージ</h3>
+                <div class="field"><label>本文</label><input id="f_text" value="${esc(m.text || '')}" placeholder="メソッド名 / 内容"></div>
+                <div class="field"><label>種類</label><select id="f_type">${opts}</select></div>
+                <div class="field"><label>向き</label><div class="empty-hint">${esc(pn(m.from))} → ${esc(pn(m.to))}</div></div>
+                <button class="btn" id="f_swap" style="width:100%;margin-bottom:8px"><span class="ico">⇄</span> 送受信を反転</button>
+                <div class="field"><label>並び替え（時間順）</label><div class="tool-grid">
+                    <button class="tool" id="f_up">▲ 上へ</button><button class="tool" id="f_down">▼ 下へ</button></div></div>${delBtn}`;
+            $('f_text').oninput = () => { m.text = $('f_text').value; render(); };
+            $('f_text').addEventListener('change', () => { recordEdit(); save(); });
+            $('f_type').onchange = () => { m.type = $('f_type').value; recordEdit(); render(); save(); };
+            $('f_swap').onclick = () => { commit(); [m.from, m.to] = [m.to, m.from]; render(); renderPanel(); save(); };
+            $('f_up').onclick = () => moveItem(state.messages, m.id, -1);
+            $('f_down').onclick = () => moveItem(state.messages, m.id, 1);
+            $('f_del').onclick = deleteSelection;
+        }
+    }
+
     /* ============================================================
      * Tool palette
      * ============================================================ */
@@ -1185,7 +1430,7 @@
         if (!DIAGRAMS[t] || t === project.type) { $('diagramType').value = project.type; return; }
         project.diagrams[project.type] = state;
         project.type = t;
-        state = project.diagrams[t] || (project.diagrams[t] = emptyDiagram());
+        state = project.diagrams[t] || (project.diagrams[t] = emptyDiagramFor(t));
         selection = null; selNodes = new Set();
         history = []; future = [];
         buildPalette();
@@ -1396,10 +1641,16 @@
         .boundary-rect{fill:none;stroke:${NS};stroke-width:1.4;stroke-dasharray:7 5}
         .boundary-title{fill:${MU};font:600 12px ${FONT}}
         .comp-icon{fill:${NH};stroke:${NS};stroke-width:1.2}
-        .edge-hit,.temp-line,.marquee{display:none}`;
+        .seq-life{stroke:${NS};stroke-width:1.1;stroke-dasharray:4 4}
+        .seq-line{stroke:${LN};stroke-width:1.4;fill:none}
+        .seq-line.dashed{stroke-dasharray:7 5}
+        .seq-arrow-filled{fill:${LN};stroke:${LN};stroke-width:1.2}
+        .seq-arrow-open{fill:none;stroke:${LN};stroke-width:1.4}
+        .seq-label{fill:${TX};font:12px ${FONT}}
+        .edge-hit,.temp-line,.marquee,.seq-hit{display:none}`;
     }
     function buildSVG() {
-        state.nodes.forEach(layoutNode);
+        if (isSeq()) renderSequence(); else state.nodes.forEach(layoutNode);
         const b = bbox(), pad = 24;
         const W = Math.ceil(b.w + pad * 2), H = Math.ceil(b.h + pad * 2);
         const inner = edgesLayer.outerHTML + nodesLayer.outerHTML;
@@ -1420,7 +1671,7 @@ ${inner}
         return `uml-${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`; }
 
     $('svgBtn').onclick = () => {
-        if (!state.nodes.length) return toast('図がありません', true);
+        if (!itemCount()) return toast('図がありません', true);
         download(new Blob([buildSVG()], { type: 'image/svg+xml;charset=utf-8' }), tsName('svg'));
         toast('SVGを保存しました');
     };
@@ -1444,12 +1695,12 @@ ${inner}
         });
     }
     $('pngBtn').onclick = async () => {
-        if (!state.nodes.length) return toast('図がありません', true);
+        if (!itemCount()) return toast('図がありません', true);
         try { download(await svgToPng(parseFloat($('scaleSelect').value) || 2), tsName('png')); toast('PNGを保存しました'); }
         catch (e) { toast('PNG保存エラー: ' + e.message, true); }
     };
     $('copyImgBtn').onclick = async () => {
-        if (!state.nodes.length) return toast('図がありません', true);
+        if (!itemCount()) return toast('図がありません', true);
         if (!(navigator.clipboard && window.ClipboardItem)) return toast('このブラウザは画像コピー非対応です', true);
         try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': await svgToPng(2) })]); toast('画像をコピーしました'); }
         catch (e) { toast('コピー失敗: ' + e.message, true); }
@@ -1459,7 +1710,7 @@ ${inner}
      * JSON save / load / share
      * ============================================================ */
     $('exportJsonBtn').onclick = () => {
-        if (!state.nodes.length) return toast('保存する図がありません', true);
+        if (!itemCount()) return toast('保存する図がありません', true);
         download(new Blob([JSON.stringify(Object.assign({ type: project.type }, state), null, 2)], { type: 'application/json' }), tsName('json'));
         toast('JSONを保存しました');
     };
@@ -1471,7 +1722,7 @@ ${inner}
         rd.readAsText(f); e.target.value = '';
     };
     $('shareBtn').onclick = async () => {
-        if (!state.nodes.length) return toast('共有する図がありません', true);
+        if (!itemCount()) return toast('共有する図がありません', true);
         const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(Object.assign({ type: project.type }, state)))));
         const url = location.origin + location.pathname + '#d=' + b64;
         try { await navigator.clipboard.writeText(url); toast('共有リンクをコピーしました'); }
@@ -1479,8 +1730,8 @@ ${inner}
     };
 
     function loadState(obj) {
-        if (!obj || !Array.isArray(obj.nodes)) throw new Error('bad');
-        const t = (obj.type && DIAGRAMS[obj.type]) ? obj.type : project.type;
+        if (!obj || !(Array.isArray(obj.nodes) || Array.isArray(obj.participants))) throw new Error('bad');
+        const t = (obj.type && DIAGRAMS[obj.type]) ? obj.type : (Array.isArray(obj.participants) ? 'sequence' : project.type);
         if (t !== project.type) {
             project.diagrams[project.type] = state;
             project.type = t; history = []; future = [];
@@ -1489,10 +1740,12 @@ ${inner}
             if (t !== 'class' && drawerOpen) toggleDrawer(false);
             $('diagramType').value = t;
         } else { commit(); }
-        const nd = { nodes: obj.nodes, edges: Array.isArray(obj.edges) ? obj.edges : [] };
+        const nd = (t === 'sequence')
+            ? { participants: obj.participants || [], messages: Array.isArray(obj.messages) ? obj.messages : [] }
+            : { nodes: obj.nodes || [], edges: Array.isArray(obj.edges) ? obj.edges : [] };
         project.diagrams[t] = nd; state = nd;
-        let mx = 0;
-        state.nodes.concat(state.edges).forEach(o => { const m = /(\d+)$/.exec(o.id || ''); if (m) mx = Math.max(mx, +m[1]); });
+        const items = (t === 'sequence') ? nd.participants.concat(nd.messages) : nd.nodes.concat(nd.edges);
+        let mx = 0; items.forEach(o => { const m = /(\d+)$/.exec(o.id || ''); if (m) mx = Math.max(mx, +m[1]); });
         seq = Math.max(seq, mx + 1);
         selection = null; selNodes = new Set(); render(); renderPanel(); fitView(); save();
     }
@@ -1550,7 +1803,35 @@ ${inner}
             N('n1', 'component', 60, 80, 'Web UI'), N('n2', 'component', 320, 80, 'API サーバー'),
             N('n3', 'component', 320, 220, '認証サービス'), N('n4', 'component', 580, 80, 'DB')
         ], edges: [E('e1', 'n1', 'n2', 'dependency', 'HTTP'), E('e2', 'n2', 'n3', 'dependency'),
-            E('e3', 'n2', 'n4', 'dependency', 'SQL')] }) }
+            E('e3', 'n2', 'n4', 'dependency', 'SQL')] }) },
+
+        seq_login: { type: 'sequence', label: 'ログイン処理', make: () => ({
+            participants: [
+                { id: 'p1', kind: 'actor', name: 'ユーザー' }, { id: 'p2', kind: 'participant', name: 'ブラウザ' },
+                { id: 'p3', kind: 'participant', name: 'APIサーバー' }, { id: 'p4', kind: 'participant', name: 'DB' }
+            ],
+            messages: [
+                { id: 'm1', from: 'p1', to: 'p2', type: 'sync', text: 'ログイン操作' },
+                { id: 'm2', from: 'p2', to: 'p3', type: 'sync', text: 'POST /login' },
+                { id: 'm3', from: 'p3', to: 'p4', type: 'sync', text: 'SELECT user' },
+                { id: 'm4', from: 'p4', to: 'p3', type: 'reply', text: 'user row' },
+                { id: 'm5', from: 'p3', to: 'p3', type: 'sync', text: 'パスワード検証' },
+                { id: 'm6', from: 'p3', to: 'p2', type: 'reply', text: '200 OK + token' },
+                { id: 'm7', from: 'p2', to: 'p1', type: 'reply', text: 'ホーム画面表示' }
+            ] }) },
+        seq_order: { type: 'sequence', label: '注文処理', make: () => ({
+            participants: [
+                { id: 'p1', kind: 'actor', name: '顧客' }, { id: 'p2', kind: 'participant', name: '注文サービス' },
+                { id: 'p3', kind: 'participant', name: '在庫サービス' }, { id: 'p4', kind: 'participant', name: '決済サービス' }
+            ],
+            messages: [
+                { id: 'm1', from: 'p1', to: 'p2', type: 'sync', text: '注文する' },
+                { id: 'm2', from: 'p2', to: 'p3', type: 'sync', text: '在庫確認' },
+                { id: 'm3', from: 'p3', to: 'p2', type: 'reply', text: '在庫あり' },
+                { id: 'm4', from: 'p2', to: 'p4', type: 'sync', text: '決済要求' },
+                { id: 'm5', from: 'p4', to: 'p2', type: 'reply', text: '決済完了' },
+                { id: 'm6', from: 'p2', to: 'p1', type: 'reply', text: '注文確定' }
+            ] }) }
     };
 
     const tsel = $('templateSelect');
@@ -1563,7 +1844,7 @@ ${inner}
     }
     tsel.onchange = () => {
         const k = tsel.value; if (!k) { return; }
-        if (state.nodes.length && !confirm('現在の図をテンプレートで置き換えますか？')) { tsel.value = ''; return; }
+        if (itemCount() && !confirm('現在の図をテンプレートで置き換えますか？')) { tsel.value = ''; return; }
         loadState(Object.assign({ type: project.type }, TEMPLATES[k].make()));
         tsel.value = '';
     };
@@ -1596,14 +1877,20 @@ ${inner}
         '',
         '【図の種類】',
         '  ・上部のセレクタでクラス図/状態遷移図/ユースケース図/',
-        '    コンポーネント図を切替（各図は個別に保存されます）',
+        '    コンポーネント図/シーケンス図を切替（各図は個別に保存）',
         '',
-        '【操作】',
+        '【操作（クラス/状態/ユースケース/コンポーネント）】',
         '  ・左のツールでノードを選び、キャンバスをクリックで配置',
         '  ・空白をダブルクリックでもノードを追加',
         '  ・関連線ツールを選び、ノードからノードへドラッグして接続',
         '  ・選択ツールでノードをドラッグして移動',
         '  ・右パネルで名前・属性・操作・多重度・ラベルを編集',
+        '',
+        '【シーケンス図】',
+        '  ・ライフライン/アクターでクリックして追加',
+        '  ・同期/非同期/応答を選びライフライン間をドラッグでメッセージ',
+        '  ・同じライフラインへドラッグで自己メッセージ',
+        '  ・メッセージは時間順、選択して▲▼で並べ替え',
         '',
         '【複数選択・整列】',
         '  ・Shift+クリック で複数選択 / Shift+ドラッグ で範囲選択',
@@ -1642,7 +1929,7 @@ ${inner}
         if (mod && e.key.toLowerCase() === 'd') { e.preventDefault(); duplicateSelection(); return; }
         if (mod && e.key.toLowerCase() === 'c') { e.preventDefault(); copySelection(); return; }
         if (mod && e.key.toLowerCase() === 'v') { e.preventDefault(); pasteClipboard(); return; }
-        if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); selNodes = new Set(state.nodes.map(n => n.id)); selection = state.nodes.length ? { kind: 'node', id: state.nodes[state.nodes.length - 1].id } : null; refreshSelectionStyles(); renderPanel(); return; }
+        if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); if (isSeq()) return; selNodes = new Set(state.nodes.map(n => n.id)); selection = state.nodes.length ? { kind: 'node', id: state.nodes[state.nodes.length - 1].id } : null; refreshSelectionStyles(); renderPanel(); return; }
         if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelection(); }
         else if (e.key === 'Escape') { setMode('select'); select(null); }
         else if (e.key === 'c' || e.key === 'C') setMode('add:' + DIAGRAMS[diagramType()].nodes[0].kind);
@@ -1669,8 +1956,17 @@ ${inner}
      * ============================================================ */
     function recomputeSeq() {
         let mx = 0;
-        for (const t in project.diagrams) project.diagrams[t].nodes.concat(project.diagrams[t].edges).forEach(o => { const m = /(\d+)$/.exec(o.id || ''); if (m) mx = Math.max(mx, +m[1]); });
+        for (const t in project.diagrams) {
+            const d = project.diagrams[t];
+            const items = (t === 'sequence') ? (d.participants || []).concat(d.messages || []) : (d.nodes || []).concat(d.edges || []);
+            items.forEach(o => { const m = /(\d+)$/.exec(o.id || ''); if (m) mx = Math.max(mx, +m[1]); });
+        }
         seq = mx + 1;
+    }
+
+    function validDiagram(t, d) {
+        if (!d) return false;
+        return (t === 'sequence') ? Array.isArray(d.participants) : Array.isArray(d.nodes);
     }
 
     (function init() {
@@ -1681,8 +1977,9 @@ ${inner}
 
         if (stored && stored.diagrams && stored.type) {                 // 新形式（プロジェクト）
             project = { type: DIAGRAMS[stored.type] ? stored.type : 'class', diagrams: {} };
-            for (const t in DIAGRAMS) project.diagrams[t] = (stored.diagrams[t] && Array.isArray(stored.diagrams[t].nodes)) ? stored.diagrams[t] : emptyDiagram();
+            for (const t in DIAGRAMS) project.diagrams[t] = validDiagram(t, stored.diagrams[t]) ? stored.diagrams[t] : emptyDiagramFor(t);
         } else if (stored && Array.isArray(stored.nodes)) {             // 旧形式（単一クラス図）→移行
+            for (const t in DIAGRAMS) project.diagrams[t] = emptyDiagramFor(t);
             project.diagrams.class = { nodes: stored.nodes, edges: Array.isArray(stored.edges) ? stored.edges : [] };
         } else {
             project.diagrams.class = TEMPLATES.c_inherit.make();
@@ -1698,7 +1995,7 @@ ${inner}
         setStatus('', '準備完了');
 
         // 共有リンクがあれば取り込み（該当図種へ）
-        if (shared && Array.isArray(shared.nodes) && shared.nodes.length) loadState(shared);
+        if (shared && (Array.isArray(shared.nodes) ? shared.nodes.length : Array.isArray(shared.participants) && shared.participants.length)) loadState(shared);
     })();
     </script>
 </body>
