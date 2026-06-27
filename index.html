@@ -181,6 +181,18 @@
             font-variant-numeric: tabular-nums; user-select: none; border-right: 1px solid var(--border); line-height: 30px; }
 
         /* ---------- Canvas ---------- */
+        /* ページタブ */
+        .tab-bar { flex: none; display: flex; align-items: stretch; gap: 2px; padding: 4px 8px 0; background: var(--panel-2); border-bottom: 1px solid var(--border); overflow-x: auto; }
+        .tab { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--border); border-bottom: none; border-radius: 6px 6px 0 0;
+            background: var(--panel-2); color: var(--text-soft); font-size: .78rem; cursor: pointer; white-space: nowrap; max-width: 200px; }
+        .tab:hover { background: var(--accent-soft); }
+        .tab.active { background: var(--panel); color: var(--text); font-weight: 600; border-color: var(--border-strong); position: relative; top: 1px; }
+        .tab .tname { overflow: hidden; text-overflow: ellipsis; }
+        .tab .tx { width: 16px; height: 16px; line-height: 14px; text-align: center; border-radius: 4px; color: var(--text-faint); font-size: .9rem; }
+        .tab .tx:hover { background: var(--error-fg); color: #fff; }
+        .tab .ttype { font-size: .62rem; color: var(--text-faint); border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; }
+        .tab-add { border: 1px dashed var(--border-strong); border-radius: 6px; background: none; color: var(--text-soft); cursor: pointer; padding: 4px 10px; font-size: .82rem; align-self: center; }
+        .tab-add:hover { border-color: var(--accent); color: var(--accent); }
         .canvas-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
         .canvas-area { flex: 1; position: relative; overflow: hidden; min-height: 0;
             background: var(--canvas-bg) radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0) 0 0 / 22px 22px; }
@@ -267,6 +279,7 @@
         .seq-note { cursor: grab; }
         .note-anchor { stroke: var(--node-stroke); stroke-width: 1; stroke-dasharray: 4 3; fill: none; opacity: .75; }
         .label-hit { fill: transparent; cursor: move; }
+        .bend-handle { fill: var(--sel); stroke: #fff; stroke-width: 1; cursor: move; }
         /* 入れ子コンテナ（複合状態 / パッケージ） */
         .container-body { fill: none; stroke: var(--node-stroke); stroke-width: 1.3; }
         .container-head { fill: var(--node-head); stroke: none; cursor: grab; }
@@ -380,6 +393,7 @@
                     <button class="btn icon-only" id="shareBtn" title="共有リンクをコピー" aria-label="共有リンク"><span class="ico">🔗</span></button>
                 </div>
             </div>
+            <div class="tab-bar" id="tabBar"></div>
             <div class="canvas-wrap" id="canvasWrap">
                 <div class="canvas-area" id="canvasArea">
                     <svg id="canvas" xmlns="http://www.w3.org/2000/svg"></svg>
@@ -426,7 +440,10 @@
         // シーケンス図のメッセージ
         sync:        { label: '同期',  dash: false, start: 'none',         end: 'open' },
         async:       { label: '非同期', dash: false, start: 'none',        end: 'open' },
-        reply:       { label: '応答(返り)', dash: true, start: 'none',      end: 'open' }
+        reply:       { label: '応答(返り)', dash: true, start: 'none',      end: 'open' },
+        // コンポーネント図のロリポップ
+        provide:     { label: '提供IF', dash: false, start: 'none',        end: 'ball' },
+        require:     { label: '要求IF', dash: false, start: 'none',        end: 'socket' }
     };
     const DEFAULT_EDGE_LABEL = { include: '«include»', extend: '«extend»' };
 
@@ -443,7 +460,7 @@
             rels: ['association', 'directed', 'include', 'extend', 'inheritance'] },
         component: { label: 'コンポーネント図',
             nodes: [{ kind: 'component', label: 'コンポーネント' }, { kind: 'interface', label: 'インタフェース' }, { kind: 'boundary', label: '境界' }, { kind: 'note', label: 'ノート' }],
-            rels: ['dependency', 'association', 'directed'] },
+            rels: ['dependency', 'association', 'directed', 'provide', 'require'] },
         sequence: { label: 'シーケンス図',
             nodes: [{ kind: 'participant', label: 'ライフライン' }, { kind: 'actor', label: 'アクター' }, { kind: 'note', label: 'ノート' }],
             rels: ['sync', 'async', 'reply'] }
@@ -467,6 +484,8 @@
         let s = `<svg viewBox="0 0 26 16"><line x1="3" y1="8" x2="20" y2="8" stroke="currentColor" stroke-width="1.3" ${dash}/>`;
         if (r.end === 'open') s += '<path d="M20 8 L15 5 M20 8 L15 11" stroke="currentColor" stroke-width="1.3" fill="none"/>';
         if (r.end === 'triangle') s += '<path class="hollow" d="M23 8 L16 4.5 L16 11.5 Z" fill="none" stroke="currentColor" stroke-width="1.3"/>';
+        if (r.end === 'ball') s += '<circle cx="19" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="1.3"/>';
+        if (r.end === 'socket') s += '<path d="M19 3 A5 5 0 0 1 19 13" fill="none" stroke="currentColor" stroke-width="1.3"/>';
         if (r.start === 'diamond') s += '<path class="hollow" d="M3 8 L7 5.5 L11 8 L7 10.5 Z" fill="none" stroke="currentColor" stroke-width="1.3"/>';
         if (r.start === 'diamondFilled') s += '<path d="M3 8 L7 5.5 L11 8 L7 10.5 Z" fill="currentColor" stroke="currentColor" stroke-width="1.3"/>';
         return s + '</svg>';
@@ -493,14 +512,17 @@
     function relType(id) { return id; }
 
     /* ============================================================
-     * State / Project（図種ごとに独立したダイアグラムを保持）
+     * State / Project（複数ページ。各ページが1つのダイアグラム）
      * ============================================================ */
     function emptyDiagramFor(t) { return t === 'sequence' ? { participants: [], messages: [], fragments: [], notes: [] } : { nodes: [], edges: [] }; }
-    let project = { type: 'class', diagrams: {} };
-    for (const t in { class: 1, state: 1, usecase: 1, component: 1, sequence: 1 }) project.diagrams[t] = emptyDiagramFor(t);
-    let state = project.diagrams.class;   // アクティブなダイアグラム
-    function diagramType() { return project.type; }
-    function isSeq() { return project.type === 'sequence'; }
+    let pageSeq = 1;
+    function makePage(type, name) { return { id: 'pg' + (pageSeq++), name: name || DIAGRAMS[type].label, type, diagram: emptyDiagramFor(type) }; }
+    let project = { ortho: false, pages: [makePage('class')], active: null };
+    project.active = project.pages[0].id;
+    function activePage() { return project.pages.find(p => p.id === project.active) || project.pages[0]; }
+    let state = activePage().diagram;     // アクティブページのダイアグラム
+    function diagramType() { return activePage().type; }
+    function isSeq() { return diagramType() === 'sequence'; }
     function ortho() { return !!project.ortho; }
     let selection = null;          // {kind:'node'|'edge', id}  ← プロパティ表示用の主選択
     let selNodes = new Set();      // 複数選択中のノードid
@@ -723,19 +745,48 @@
         return g;
     }
 
-    function routeEdge(a, b) {
+    function orthogonalize(pts) {                    // 折れ線を直角化（各区間を水平→垂直のL字に）
+        const out = [pts[0]];
+        for (let i = 1; i < pts.length; i++) {
+            const prev = out[out.length - 1], cur = pts[i];
+            if (Math.abs(prev.x - cur.x) > 0.5 && Math.abs(prev.y - cur.y) > 0.5) out.push({ x: cur.x, y: prev.y });
+            out.push({ x: cur.x, y: cur.y });
+        }
+        return out;
+    }
+    function vBlocked(x, y1, y2, exclude) {
+        const lo = Math.min(y1, y2), hi = Math.max(y1, y2);
+        for (const n of state.nodes) { if (exclude.has(n.id) || n.kind === 'note') continue; if (x > n.x + 2 && x < n.x + n.w - 2 && hi > n.y && lo < n.y + n.h) return n; }
+        return null;
+    }
+    function hBlocked(y, x1, x2, exclude) {
+        const lo = Math.min(x1, x2), hi = Math.max(x1, x2);
+        for (const n of state.nodes) { if (exclude.has(n.id) || n.kind === 'note') continue; if (y > n.y + 2 && y < n.y + n.h - 2 && hi > n.x && lo < n.x + n.w) return n; }
+        return null;
+    }
+    function routeEdge(e, a, b) {
         const ca = center(a), cb = center(b);
-        if (!ortho()) { return [borderPoint(a, cb), borderPoint(b, ca)]; }
-        const dx = cb.x - ca.x, dy = cb.y - ca.y;
+        const wps = (e.waypoints && e.waypoints.length) ? e.waypoints : null;
+        if (wps) {
+            const pA = borderPoint(a, wps[0]), pB = borderPoint(b, wps[wps.length - 1]);
+            const pts = [pA, ...wps.map(w => ({ x: w.x, y: w.y })), pB];
+            return ortho() ? orthogonalize(pts) : pts;
+        }
+        if (!ortho()) return [borderPoint(a, cb), borderPoint(b, ca)];
+        const dx = cb.x - ca.x, dy = cb.y - ca.y, exclude = new Set([a.id, b.id]);
         if (Math.abs(dx) >= Math.abs(dy)) {
             const s = dx >= 0 ? 1 : -1;
             const pA = { x: ca.x + s * a.w / 2, y: ca.y }, pB = { x: cb.x - s * b.w / 2, y: cb.y };
-            const mx = (pA.x + pB.x) / 2;
+            let mx = (pA.x + pB.x) / 2;
+            const nb = vBlocked(mx, pA.y, pB.y, exclude);   // 中央の縦区間を回避
+            if (nb) { const l = nb.x - 14, r = nb.x + nb.w + 14; mx = Math.abs(l - pA.x) <= Math.abs(r - pA.x) ? l : r; }
             return [pA, { x: mx, y: pA.y }, { x: mx, y: pB.y }, pB];
         } else {
             const s = dy >= 0 ? 1 : -1;
             const pA = { x: ca.x, y: ca.y + s * a.h / 2 }, pB = { x: cb.x, y: cb.y - s * b.h / 2 };
-            const my = (pA.y + pB.y) / 2;
+            let my = (pA.y + pB.y) / 2;
+            const nb = hBlocked(my, pA.x, pB.x, exclude);
+            if (nb) { const tp = nb.y - 14, bt = nb.y + nb.h + 14; my = Math.abs(tp - pA.y) <= Math.abs(bt - pA.y) ? tp : bt; }
             return [pA, { x: pA.x, y: my }, { x: pB.x, y: my }, pB];
         }
     }
@@ -746,13 +797,14 @@
         if (!a || !b) return null;
         const r = REL[e.type] || REL.association;
         if (e.from === e.to) return drawSelfEdge(e, a, r);
-        const pts = routeEdge(a, b);
+        const pts = routeEdge(e, a, b);
         const pA = pts[0], pB = pts[pts.length - 1];
         const endDir = unit(sub(pB, pts[pts.length - 2]));
         const startDir = unit(sub(pA, pts[1]));
         // 三角/菱形のぶん端点を内側へ
         const lpts = pts.map(p => ({ x: p.x, y: p.y }));
-        if (r.end === 'triangle') { const i = lpts.length - 1; lpts[i] = sub(lpts[i], mul(endDir, 14)); }
+        const endCut = r.end === 'triangle' ? 14 : r.end === 'ball' ? 12 : 0;
+        if (endCut) { const i = lpts.length - 1; lpts[i] = sub(lpts[i], mul(endDir, endCut)); }
         if (r.start === 'diamond' || r.start === 'diamondFilled') lpts[0] = sub(lpts[0], mul(startDir, 16));
 
         const g = el('g', { class: 'edge' + (isSel('edge', e.id) ? ' selected' : '') });
@@ -773,6 +825,14 @@
             const mi = Math.floor((pts.length - 1) / 2);
             const base = { x: (pts[mi].x + pts[mi + 1].x) / 2, y: (pts[mi].y + pts[mi + 1].y) / 2 - 6 };
             g.append(labelGroup(e, base.x + (e.labelDx || 0), base.y + (e.labelDy || 0)));
+        }
+        // ベンド点ハンドル（選択中のみ）
+        if (isSel('edge', e.id) && e.waypoints) {
+            e.waypoints.forEach((w, i) => {
+                const h = el('rect', { class: 'bend-handle', x: w.x - 4, y: w.y - 4, width: 8, height: 8, rx: 1 });
+                h.dataset.bend = e.id + ':' + i;
+                g.append(h);
+            });
         }
         return g;
     }
@@ -808,6 +868,15 @@
             const base = sub(tip, mul(dir, m));
             const a = add(base, mul(p, hw)), b = sub(base, mul(p, hw));
             return el('path', { class: 'marker-open', d: `M${a.x},${a.y} L${tip.x},${tip.y} L${b.x},${b.y}` });
+        }
+        if (type === 'ball') {                       // 提供IF（ロリポップ）
+            const c = sub(tip, mul(dir, 6));
+            return el('circle', { class: 'marker-hollow', cx: c.x, cy: c.y, r: 6 });
+        }
+        if (type === 'socket') {                     // 要求IF（ソケット）
+            const r = 9, c = sub(tip, mul(dir, r));
+            const a = add(c, mul(p, r)), b = sub(c, mul(p, r));
+            return el('path', { class: 'marker-open', d: `M${a.x},${a.y} A${r} ${r} 0 0 1 ${b.x},${b.y}` });
         }
         if (type === 'triangle') {
             const m = 14, hw = 7;
@@ -1142,6 +1211,13 @@
         }
 
         // select mode
+        const bendEl = e.target.closest('[data-bend]');
+        if (bendEl) {                               // ベンド点のドラッグ
+            const [id, idx] = bendEl.dataset.bend.split(':');
+            const ed = edgeById(id);
+            if (ed) { select('edge', id); drag = { kind: 'bend', id, idx: +idx, moved: false }; canvas.setPointerCapture(e.pointerId); }
+            return;
+        }
         const labelEl = e.target.closest('[data-label]');
         if (labelEl && !nodeEl) {                   // ラベルのドラッグ移動
             const ed = edgeById(labelEl.dataset.label);
@@ -1204,6 +1280,10 @@
             const pt = toDiagram(e.clientX, e.clientY);
             const ed = edgeById(drag.id);
             if (ed) { ed.labelDx = Math.round(drag.bx + (pt.x - drag.ox)); ed.labelDy = Math.round(drag.by + (pt.y - drag.oy)); drag.moved = true; scheduleRender(); }
+        } else if (drag.kind === 'bend') {
+            const pt = toDiagram(e.clientX, e.clientY);
+            const ed = edgeById(drag.id);
+            if (ed && ed.waypoints && ed.waypoints[drag.idx]) { ed.waypoints[drag.idx] = { x: snapv(pt.x), y: snapv(pt.y) }; drag.moved = true; scheduleRender(); }
         } else if (drag.kind === 'edge') {
             const pt = toDiagram(e.clientX, e.clientY);
             drag.temp.setAttribute('x2', pt.x); drag.temp.setAttribute('y2', pt.y);
@@ -1226,7 +1306,7 @@
             if (targetNode && targetNode.dataset.node !== drag.from) {
                 createEdge(drag.from, targetNode.dataset.node, drag.rel);
             }
-        } else if (drag.kind === 'label' && drag.moved) {
+        } else if ((drag.kind === 'label' || drag.kind === 'bend') && drag.moved) {
             commit(); save();
         } else if (drag.kind === 'node' && drag.moved) {
             // ドロップ位置でコンテナへの所属を更新（掴んだノードのみ）
@@ -1255,6 +1335,26 @@
 
     canvas.addEventListener('dblclick', e => {
         if (isSeq()) { if (!e.target.closest('[data-part]')) createParticipant('participant'); return; }
+        const bendEl = e.target.closest('[data-bend]');
+        if (bendEl) {                               // ベンド点を削除
+            const [id, idx] = bendEl.dataset.bend.split(':'); const ed = edgeById(id);
+            if (ed && ed.waypoints) { commit(); ed.waypoints.splice(+idx, 1); if (!ed.waypoints.length) delete ed.waypoints; render(); save(); }
+            return;
+        }
+        const edgeEl = e.target.closest('[data-edge]');
+        if (edgeEl && !e.target.closest('[data-node]')) {   // 関連線にベンド点を追加
+            const ed = edgeById(edgeEl.dataset.edge); if (!ed || ed.from === ed.to) return;
+            const a = nodeById(ed.from), b = nodeById(ed.to); if (!a || !b) return;
+            const pt = toDiagram(e.clientX, e.clientY);
+            const ca = center(a), cb = center(b);
+            const tOf = p => { const dx = cb.x - ca.x, dy = cb.y - ca.y, L = dx * dx + dy * dy || 1; return ((p.x - ca.x) * dx + (p.y - ca.y) * dy) / L; };
+            commit();
+            const wps = (ed.waypoints || []).concat([{ x: Math.round(pt.x), y: Math.round(pt.y) }]);
+            wps.sort((u, v) => tOf(u) - tOf(v));
+            ed.waypoints = wps;
+            select('edge', ed.id); render(); save();
+            return;
+        }
         if (e.target.closest('[data-node]')) return;
         const pt = toDiagram(e.clientX, e.clientY);
         const def = DIAGRAMS[diagramType()].nodes[0];
@@ -1654,7 +1754,9 @@
                 <div class="field"><label>多重度（${esc(a ? a.name : '?')}側）</label><input id="f_fmult" value="${esc(e.fromMult || '')}" placeholder="1, 0..*, *"></div>
                 <div class="field"><label>多重度（${esc(b ? b.name : '?')}側）</label><input id="f_tmult" value="${esc(e.toMult || '')}" placeholder="1, 0..*, *"></div>
                 <div class="field"><label>ラベル（任意）</label><input id="f_label" value="${esc(e.label || '')}" placeholder="uses, owns …"></div>
+                <div class="hint" style="margin:-4px 0 8px">ダブルクリックでベンド点を追加 / 点をダブルクリックで削除</div>
                 <button class="btn" id="f_swap" style="width:100%;margin-bottom:8px"><span class="ico">⇄</span> 向きを反転</button>
+                ${(e.waypoints && e.waypoints.length) ? '<button class="btn" id="f_reset" style="width:100%;margin-bottom:8px"><span class="ico">⟲</span> 配線をリセット</button>' : ''}
                 <button class="btn danger" id="f_del" style="width:100%"><span class="ico">🗑</span> この関連を削除</button>`;
             const upd = () => { e.type = $('f_type').value; e.fromMult = $('f_fmult').value.trim();
                 e.toMult = $('f_tmult').value.trim(); e.label = $('f_label').value.trim(); render(); };
@@ -1662,6 +1764,7 @@
             $('f_fmult').oninput = $('f_tmult').oninput = $('f_label').oninput = upd;
             ['f_fmult','f_tmult','f_label'].forEach(id => $(id).addEventListener('change', () => { recordEdit(); save(); }));
             $('f_swap').onclick = () => { commit(); [e.from, e.to] = [e.to, e.from]; [e.fromMult, e.toMult] = [e.toMult, e.fromMult]; render(); renderPanel(); save(); };
+            if ($('f_reset')) $('f_reset').onclick = () => { commit(); delete e.waypoints; delete e.labelDx; delete e.labelDy; render(); renderPanel(); save(); };
             $('f_del').onclick = deleteSelection;
         }
     }
@@ -1781,21 +1884,69 @@
             m.startsWith('add:') ? `クリックで${toolLabel(m)}を配置` : toolLabel(m) + ': ノード間をドラッグ');
     }
 
-    function switchType(t) {
-        if (!DIAGRAMS[t] || t === project.type) { $('diagramType').value = project.type; return; }
-        project.diagrams[project.type] = state;
-        project.type = t;
-        state = project.diagrams[t] || (project.diagrams[t] = emptyDiagramFor(t));
-        selection = null; selNodes = new Set();
-        history = []; future = [];
-        buildPalette();
-        buildTemplateOptions();
-        $('textBtn').disabled = !canText(t);
-        if (!canText(t) && drawerOpen) toggleDrawer(false);
-        render(); renderPanel(); fitView(); save();
-        $('diagramType').value = t;
+    function reloadActive() {
+        const pg = activePage();
+        state = pg.diagram;
+        selection = null; selNodes = new Set(); history = []; future = [];
+        buildPalette(); buildTemplateOptions();
+        $('diagramType').value = pg.type;
+        $('textBtn').disabled = !canText(pg.type);
+        if (!canText(pg.type) && drawerOpen) toggleDrawer(false);
+        render(); renderPanel(); fitView(); renderTabs();
+    }
+    function switchType(t) {                          // アクティブページの図種を変更
+        const pg = activePage();
+        if (!DIAGRAMS[t] || t === pg.type) { $('diagramType').value = pg.type; return; }
+        const cnt = isSeq() ? (state.participants || []).length + (state.messages || []).length : state.nodes.length + state.edges.length;
+        if (cnt > 0 && !confirm('このページの図種を変更すると現在の内容は消去されます。続けますか？')) { $('diagramType').value = pg.type; return; }
+        pg.type = t; pg.diagram = emptyDiagramFor(t);
+        if (/^(クラス図|状態遷移図|ユースケース図|コンポーネント図|シーケンス図)/.test(pg.name)) pg.name = DIAGRAMS[t].label;
+        reloadActive(); save();
     }
     $('diagramType').onchange = () => switchType($('diagramType').value);
+
+    /* ---- ページ（タブ）管理 ---- */
+    function switchPage(id) {
+        if (id === project.active) return;
+        activePage().diagram = state;            // 念のため確定
+        project.active = id;
+        reloadActive(); save();
+    }
+    function addPage(type) {
+        activePage().diagram = state;
+        const pg = makePage(type || 'class');
+        project.pages.push(pg); project.active = pg.id;
+        reloadActive(); save();
+    }
+    function deletePage(id) {
+        if (project.pages.length <= 1) return toast('最後のページは削除できません', true);
+        const pg = project.pages.find(p => p.id === id); if (!pg) return;
+        if (!confirm(`ページ「${pg.name}」を削除しますか？`)) return;
+        const idx = project.pages.findIndex(p => p.id === id);
+        project.pages = project.pages.filter(p => p.id !== id);
+        if (project.active === id) project.active = project.pages[Math.max(0, idx - 1)].id;
+        reloadActive(); save();
+    }
+    function renamePage(id) {
+        const pg = project.pages.find(p => p.id === id); if (!pg) return;
+        const nm = prompt('ページ名', pg.name);
+        if (nm != null && nm.trim()) { pg.name = nm.trim(); renderTabs(); save(); }
+    }
+    function renderTabs() {
+        const bar = $('tabBar'); bar.replaceChildren();
+        for (const pg of project.pages) {
+            const t = document.createElement('div');
+            t.className = 'tab' + (pg.id === project.active ? ' active' : '');
+            t.innerHTML = `<span class="ttype">${DIAGRAMS[pg.type].label.replace('図', '')}</span><span class="tname">${esc(pg.name)}</span><span class="tx" title="削除">✕</span>`;
+            t.onclick = e => { if (e.target.classList.contains('tx')) deletePage(pg.id); else switchPage(pg.id); };
+            t.ondblclick = e => { if (!e.target.classList.contains('tx')) renamePage(pg.id); };
+            bar.append(t);
+        }
+        const add = document.createElement('button');
+        add.className = 'tab-add'; add.textContent = '＋ ページ'; add.title = '新しいページを追加';
+        add.onclick = () => addPage('class');
+        bar.append(add);
+    }
 
     /* ============================================================
      * テキスト⇄図 双方向同期（PlantUML風DSL）※クラス図のみ
@@ -2119,6 +2270,8 @@
             case 'inheritance': return `${f} --|> ${t}`;
             case 'include': return `${f} ..> ${t} : <<include>>`;
             case 'extend': return `${f} ..> ${t} : <<extend>>`;
+            case 'provide': return `${f} -- ${t} : <<provide>>${e.label ? ' ' + e.label : ''}`;
+            case 'require': return `${f} -- ${t} : <<require>>${e.label ? ' ' + e.label : ''}`;
             case 'dependency': return `${f} ..> ${t}${e.label ? ' : ' + e.label : ''}`;
             case 'directed': return `${f} --> ${t}${e.label ? ' : ' + e.label : ''}`;
             default: return `${f} -- ${t}${e.label ? ' : ' + e.label : ''}`;
@@ -2179,8 +2332,11 @@
                 else if (op === '<--') { ty = 'directed'; from = rn; to = ln; }
                 else if (op === '-->') { ty = 'directed'; from = ln; to = rn; }
                 else { ty = 'association'; from = ln; to = rn; }
+                let pm2;
                 if (/<<\s*include\s*>>/i.test(label)) { ty = 'include'; label = '«include»'; }
                 else if (/<<\s*extend\s*>>/i.test(label)) { ty = 'extend'; label = '«extend»'; }
+                else if (pm2 = label.match(/^<<\s*provide\s*>>\s*(.*)$/i)) { ty = 'provide'; label = pm2[1].trim(); }
+                else if (pm2 = label.match(/^<<\s*require\s*>>\s*(.*)$/i)) { ty = 'require'; label = pm2[1].trim(); }
                 edges.push({ fromName: from.name, toName: to.name, type: ty, label });
             }
         }
@@ -2312,7 +2468,7 @@
         .frag-tab{fill:${NH};stroke:${NS};stroke-width:1.2}
         .frag-tab-text{fill:${MU};font:600 11px ${FONT}}
         .frag-else{stroke:${NS};stroke-width:1;stroke-dasharray:6 4}
-        .edge-hit,.temp-line,.marquee,.seq-hit,.label-hit{display:none}`;
+        .edge-hit,.temp-line,.marquee,.seq-hit,.label-hit,.bend-handle{display:none}`;
     }
     function buildSVG() {
         if (isSeq()) renderSequence(); else { state.nodes.forEach(layoutNode); layoutContainers(); }
@@ -2376,7 +2532,7 @@ ${inner}
      * ============================================================ */
     $('exportJsonBtn').onclick = () => {
         if (!itemCount()) return toast('保存する図がありません', true);
-        download(new Blob([JSON.stringify(Object.assign({ type: project.type }, state), null, 2)], { type: 'application/json' }), tsName('json'));
+        download(new Blob([JSON.stringify(Object.assign({ type: diagramType() }, state), null, 2)], { type: 'application/json' }), tsName('json'));
         toast('JSONを保存しました');
     };
     $('importBtn').onclick = () => $('fileInput').click();
@@ -2388,7 +2544,7 @@ ${inner}
     };
     $('shareBtn').onclick = async () => {
         if (!itemCount()) return toast('共有する図がありません', true);
-        const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(Object.assign({ type: project.type }, state)))));
+        const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(Object.assign({ type: diagramType() }, state)))));
         const url = location.origin + location.pathname + '#d=' + b64;
         try { await navigator.clipboard.writeText(url); toast('共有リンクをコピーしました'); }
         catch (_) { history.replaceState(null, '', '#d=' + b64); toast('URLを更新しました'); }
@@ -2396,23 +2552,21 @@ ${inner}
 
     function loadState(obj) {
         if (!obj || !(Array.isArray(obj.nodes) || Array.isArray(obj.participants))) throw new Error('bad');
-        const t = (obj.type && DIAGRAMS[obj.type]) ? obj.type : (Array.isArray(obj.participants) ? 'sequence' : project.type);
-        if (t !== project.type) {
-            project.diagrams[project.type] = state;
-            project.type = t; history = []; future = [];
-            buildPalette(); buildTemplateOptions();
-            $('textBtn').disabled = !canText(t);
-            if (!canText(t) && drawerOpen) toggleDrawer(false);
-            $('diagramType').value = t;
-        } else { commit(); }
+        const t = (obj.type && DIAGRAMS[obj.type]) ? obj.type : (Array.isArray(obj.participants) ? 'sequence' : diagramType());
+        const pg = activePage();
+        const typeChange = (t !== pg.type);
+        if (!typeChange) commit();
         const nd = (t === 'sequence')
             ? { participants: obj.participants || [], messages: Array.isArray(obj.messages) ? obj.messages : [], fragments: Array.isArray(obj.fragments) ? obj.fragments : [], notes: Array.isArray(obj.notes) ? obj.notes : [] }
             : { nodes: obj.nodes || [], edges: Array.isArray(obj.edges) ? obj.edges : [] };
-        project.diagrams[t] = nd; state = nd;
+        if (typeChange && /^(クラス図|状態遷移図|ユースケース図|コンポーネント図|シーケンス図)/.test(pg.name)) pg.name = DIAGRAMS[t].label;
+        pg.type = t; pg.diagram = nd; state = nd;
         const items = (t === 'sequence') ? nd.participants.concat(nd.messages, nd.fragments, nd.notes) : nd.nodes.concat(nd.edges);
         let mx = 0; items.forEach(o => { const m = /(\d+)$/.exec(o.id || ''); if (m) mx = Math.max(mx, +m[1]); });
         seq = Math.max(seq, mx + 1);
-        selection = null; selNodes = new Set(); render(); renderPanel(); fitView(); save();
+        selection = null; selNodes = new Set();
+        if (typeChange) { history = []; future = []; buildPalette(); buildTemplateOptions(); $('diagramType').value = t; $('textBtn').disabled = !canText(t); if (!canText(t) && drawerOpen) toggleDrawer(false); }
+        render(); renderPanel(); fitView(); renderTabs(); save();
     }
 
     /* ============================================================
@@ -2506,14 +2660,14 @@ ${inner}
     function buildTemplateOptions() {
         tsel.replaceChildren();
         const o0 = document.createElement('option'); o0.value = ''; o0.textContent = 'テンプレート…'; tsel.append(o0);
-        for (const [k, t] of Object.entries(TEMPLATES)) if (t.type === project.type) {
+        for (const [k, t] of Object.entries(TEMPLATES)) if (t.type === diagramType()) {
             const o = document.createElement('option'); o.value = k; o.textContent = t.label; tsel.append(o);
         }
     }
     tsel.onchange = () => {
         const k = tsel.value; if (!k) { return; }
         if (itemCount() && !confirm('現在の図をテンプレートで置き換えますか？')) { tsel.value = ''; return; }
-        loadState(Object.assign({ type: project.type }, TEMPLATES[k].make()));
+        loadState(Object.assign({ type: diagramType() }, TEMPLATES[k].make()));
         tsel.value = '';
     };
 
@@ -2529,7 +2683,7 @@ ${inner}
     function setStatus(s, t) { const p = $('statusPill'); p.classList.toggle('ok', s === 'ok'); $('statusText').textContent = t; }
     let saveTimer;
     function save() {
-        try { project.diagrams[project.type] = state; localStorage.setItem(LS_KEY, JSON.stringify(project)); } catch (_) {}
+        try { activePage().diagram = state; localStorage.setItem(LS_KEY, JSON.stringify(project)); } catch (_) {}
         const b = $('savedBadge'); b.classList.add('show'); clearTimeout(saveTimer); saveTimer = setTimeout(() => b.classList.remove('show'), 1200);
         $('undoBtn').disabled = !history.length; $('redoBtn').disabled = !future.length;
     }
@@ -2574,8 +2728,14 @@ ${inner}
         '  ・Shift+クリック で複数選択 / Shift+ドラッグ で範囲選択',
         '  ・Ctrl/Cmd+A で全選択',
         '  ・2件以上選択でプロパティに整列ボタン（左/中央/右/上下/等間隔）',
-        '  ・🧲 グリッド吸着、⌐ 直交配線、▦ 自動整列',
-        '  ・関連線のラベルはドラッグで自由に移動できます',
+        '  ・🧲 グリッド吸着、⌐ 直交配線（障害物回避付き）、▦ 自動整列',
+        '  ・関連線をダブルクリックでベンド点追加、ドラッグで配線調整',
+        '  ・点をダブルクリックで削除。ラベルもドラッグで移動',
+        '',
+        '【複数ページ（タブ）】',
+        '  ・キャンバス上部のタブで複数の図を管理',
+        '  ・＋ページ で追加、ダブルクリックで名前変更、✕ で削除',
+        '  ・図種セレクタは現在のページの図種を変更します',
         '',
         '【テキスト双方向同期（全5図種）】',
         '  ・</>テキスト でPlantUML風コードを表示（図⇄テキスト即時反映）',
@@ -2638,13 +2798,14 @@ ${inner}
      * Init
      * ============================================================ */
     function recomputeSeq() {
-        let mx = 0;
-        for (const t in project.diagrams) {
-            const d = project.diagrams[t];
-            const items = (t === 'sequence') ? (d.participants || []).concat(d.messages || [], d.fragments || [], d.notes || []) : (d.nodes || []).concat(d.edges || []);
+        let mx = 0, mp = 0;
+        for (const pg of project.pages) {
+            const d = pg.diagram;
+            const items = (pg.type === 'sequence') ? (d.participants || []).concat(d.messages || [], d.fragments || [], d.notes || []) : (d.nodes || []).concat(d.edges || []);
             items.forEach(o => { const m = /(\d+)$/.exec(o.id || ''); if (m) mx = Math.max(mx, +m[1]); });
+            const pm = /(\d+)$/.exec(pg.id || ''); if (pm) mp = Math.max(mp, +pm[1]);
         }
-        seq = mx + 1;
+        seq = mx + 1; pageSeq = mp + 1;
     }
 
     function validDiagram(t, d) {
@@ -2658,28 +2819,37 @@ ${inner}
         if (m) { try { shared = JSON.parse(decodeURIComponent(escape(atob(m[1])))); } catch (_) {} }
         try { const s = localStorage.getItem(LS_KEY); if (s) stored = JSON.parse(s); } catch (_) {}
 
-        if (stored && stored.diagrams && stored.type) {                 // 新形式（プロジェクト）
-            project = { type: DIAGRAMS[stored.type] ? stored.type : 'class', ortho: !!stored.ortho, diagrams: {} };
-            for (const t in DIAGRAMS) project.diagrams[t] = validDiagram(t, stored.diagrams[t]) ? stored.diagrams[t] : emptyDiagramFor(t);
-        } else if (stored && Array.isArray(stored.nodes)) {             // 旧形式（単一クラス図）→移行
-            for (const t in DIAGRAMS) project.diagrams[t] = emptyDiagramFor(t);
-            project.diagrams.class = { nodes: stored.nodes, edges: Array.isArray(stored.edges) ? stored.edges : [] };
+        if (stored && Array.isArray(stored.pages) && stored.pages.length) {   // 新形式（ページ）
+            const pages = stored.pages.filter(p => p && DIAGRAMS[p.type] && validDiagram(p.type, p.diagram))
+                .map(p => ({ id: p.id || ('pg' + pageSeq++), name: p.name || DIAGRAMS[p.type].label, type: p.type, diagram: p.diagram }));
+            project = { ortho: !!stored.ortho, pages: pages.length ? pages : [makePage('class')], active: null };
+            project.active = pages.some(p => p.id === stored.active) ? stored.active : project.pages[0].id;
+        } else if (stored && stored.diagrams && stored.type) {               // 旧形式（5図種プロジェクト）→ページへ移行
+            const pages = [];
+            for (const t in DIAGRAMS) {
+                const d = stored.diagrams[t];
+                if (validDiagram(t, d)) { const items = (t === 'sequence') ? (d.participants || []) : (d.nodes || []); if (items.length) pages.push({ id: 'pg' + pageSeq++, name: DIAGRAMS[t].label, type: t, diagram: d }); }
+            }
+            if (!pages.length) pages.push(makePage('class'));
+            project = { ortho: !!stored.ortho, pages, active: (pages.find(p => p.type === stored.type) || pages[0]).id };
+        } else if (stored && Array.isArray(stored.nodes)) {                  // 最旧形式（単一クラス図）
+            project = { ortho: false, pages: [{ id: 'pg' + pageSeq++, name: DIAGRAMS.class.label, type: 'class', diagram: { nodes: stored.nodes, edges: Array.isArray(stored.edges) ? stored.edges : [] } }], active: null };
+            project.active = project.pages[0].id;
         } else {
-            project.diagrams.class = TEMPLATES.c_inherit.make();
+            project = { ortho: false, pages: [{ id: 'pg' + pageSeq++, name: DIAGRAMS.class.label, type: 'class', diagram: TEMPLATES.c_inherit.make() }], active: null };
+            project.active = project.pages[0].id;
         }
-        state = project.diagrams[project.type];
+        state = activePage().diagram;
         recomputeSeq();
 
-        $('diagramType').value = project.type;
-        $('textBtn').disabled = !canText(project.type);
+        $('diagramType').value = diagramType();
+        $('textBtn').disabled = !canText(diagramType());
         $('orthoBtn').classList.toggle('toggle-on', !!project.ortho);
-        buildPalette();
-        buildTemplateOptions();
+        buildPalette(); buildTemplateOptions(); renderTabs();
         render(); renderPanel(); fitView();
         setStatus('', '準備完了');
 
-        // 共有リンクがあれば取り込み（該当図種へ）
-        if (shared && (Array.isArray(shared.nodes) ? shared.nodes.length : Array.isArray(shared.participants) && shared.participants.length)) loadState(shared);
+        if (shared && (Array.isArray(shared.nodes) ? shared.nodes.length : Array.isArray(shared.participants) && shared.participants.length)) { addPage(shared.type || 'class'); loadState(shared); }
     })();
     </script>
 </body>
