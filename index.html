@@ -266,6 +266,11 @@
         .node.multi .note-rect { stroke: var(--sel); stroke-dasharray: 5 3; }
         .seq-note { cursor: grab; }
         .note-anchor { stroke: var(--node-stroke); stroke-width: 1; stroke-dasharray: 4 3; fill: none; opacity: .75; }
+        /* 入れ子コンテナ（複合状態 / パッケージ） */
+        .container-body { fill: none; stroke: var(--node-stroke); stroke-width: 1.3; }
+        .container-head { fill: var(--node-head); stroke: none; cursor: grab; }
+        .node.selected .container-body { stroke: var(--sel); stroke-width: 2.2; }
+        .node.multi .container-body { stroke: var(--sel); stroke-dasharray: 5 3; }
 
         .canvas-empty {
             position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -426,7 +431,7 @@
     // 図種ごとの定義（ノード種別 / 関連ツール）
     const DIAGRAMS = {
         class: { label: 'クラス図',
-            nodes: [{ kind: 'class', label: 'クラス' }, { kind: 'note', label: 'ノート' }],
+            nodes: [{ kind: 'class', label: 'クラス' }, { kind: 'package', label: 'パッケージ' }, { kind: 'note', label: 'ノート' }],
             rels: ['association', 'directed', 'inheritance', 'realization', 'dependency', 'aggregation', 'composition'] },
         state: { label: '状態遷移図',
             nodes: [{ kind: 'state', label: '状態' }, { kind: 'initial', label: '開始' }, { kind: 'final', label: '終了' }, { kind: 'note', label: 'ノート' }],
@@ -441,7 +446,7 @@
             nodes: [{ kind: 'participant', label: 'ライフライン' }, { kind: 'actor', label: 'アクター' }, { kind: 'note', label: 'ノート' }],
             rels: ['sync', 'async', 'reply'] }
     };
-    const NODE_LABEL = { class: 'クラス', state: '状態', initial: '開始', final: '終了', actor: 'アクター', usecase: 'ユースケース', boundary: '境界', component: 'コンポーネント', interface: 'インタフェース', participant: 'ライフライン', note: 'ノート' };
+    const NODE_LABEL = { class: 'クラス', state: '状態', initial: '開始', final: '終了', actor: 'アクター', usecase: 'ユースケース', boundary: '境界', component: 'コンポーネント', interface: 'インタフェース', participant: 'ライフライン', note: 'ノート', package: 'パッケージ' };
     const TOOL_LABEL = { select: '選択' };
 
     // パレット用の小さなプレビューSVG（ツールid: 'select' / 'add:<kind>' / 'rel:<type>'）
@@ -478,6 +483,7 @@
             case 'interface': return `<svg viewBox="0 0 26 16"><circle cx="13" cy="8" r="5" ${w}/></svg>`;
             case 'participant': return `<svg viewBox="0 0 26 16"><rect x="7" y="1" width="12" height="6" ${w}/><line x1="13" y1="7" x2="13" y2="15" stroke="currentColor" stroke-width="1.1" stroke-dasharray="2 2"/></svg>`;
             case 'note': return `<svg viewBox="0 0 26 16"><path d="M4 2 L18 2 L22 6 L22 14 L4 14 Z" ${w}/><path d="M18 2 L18 6 L22 6" ${w}/></svg>`;
+            case 'package': return `<svg viewBox="0 0 26 16"><path d="M3 5 L10 5 L12 7 L23 7 L23 14 L3 14 Z" ${w}/></svg>`;
         }
         return `<svg viewBox="0 0 26 16"><rect x="4" y="3" width="18" height="10" ${w}/></svg>`;
     }
@@ -546,7 +552,8 @@
         else if (kind === 'final') { n.w = 26; n.h = 26; }
         else if (kind === 'actor') { n.w = Math.max(40, measure(n.name || 'Actor', titleFont)); n.h = 64; }
         else if (kind === 'usecase') { const tw = measure(n.name || 'UseCase', titleFont); n.w = Math.max(110, Math.ceil(tw) + 44); n.h = 56; }
-        else if (kind === 'boundary') { n.w = Math.max(160, n.w || 280); n.h = Math.max(120, n.h || 200); }
+        else if (kind === 'boundary') { n.w = Math.max(160, n.w || 280); n.h = Math.max(120, n.h || 200); n._titleH = CTITLE; }
+        else if (kind === 'package') { n.w = Math.max(140, n.w || 160); n.h = Math.max(90, n.h || 110); n._titleH = 18; }
         else if (kind === 'component') { const tw = measure(n.name || 'Component', titleFont); n.w = Math.max(150, Math.ceil(tw) + 56); n.h = 58; }
         else if (kind === 'interface') { const tw = measure(n.name || 'Interface', titleFont); n.w = Math.max(96, Math.ceil(tw) + 30); n.h = 58; }
         else if (kind === 'note') {
@@ -570,6 +577,7 @@
     function render() {
         if (isSeq()) return renderSequence();
         state.nodes.forEach(layoutNode);
+        layoutContainers();
         // edges first (under nodes)
         const ef = document.createDocumentFragment();
         for (const e of state.edges) { const g = drawEdge(e); if (g) ef.append(g); }
@@ -585,7 +593,8 @@
         }
         edgesLayer.replaceChildren(ef);
         const nf = document.createDocumentFragment();
-        for (const n of state.nodes) nf.append(drawNode(n));
+        const ordered = [...state.nodes].sort((a, b) => nodeDepth(a) - nodeDepth(b)); // 親→子の順に描画
+        for (const n of ordered) nf.append(drawNode(n));
         nodesLayer.replaceChildren(nf);
         applyView();
         $('emptyState').classList.toggle('hidden', state.nodes.length > 0);
@@ -614,8 +623,23 @@
             let my = n._headH + n._attrH + 14;
             for (const m of (n.methods || [])) { g.append(text(PADX, my, m, 'node-member', 'start')); my += LINE; }
         } else if (kind === 'state') {
-            g.append(el('rect', { class: 'shape', x: 0, y: 0, width: W, height: H, rx: 12, ry: 12 }));
-            g.append(text(cx, cy + 4, n.name || 'State', 'node-title', 'middle'));
+            if (hasChildren(n)) {                       // 複合状態
+                const th = n._titleH || CTITLE;
+                g.append(el('rect', { class: 'container-body', x: 0, y: 0, width: W, height: H, rx: 12, ry: 12 }));
+                g.append(el('rect', { class: 'container-head', x: 2, y: 2, width: W - 4, height: th - 2, rx: 8 }));
+                g.append(text(cx, th - 8, n.name || 'State', 'node-title', 'middle'));
+                g.append(el('line', { class: 'compartment-sep', x1: 0, y1: th, x2: W, y2: th }));
+            } else {
+                g.append(el('rect', { class: 'shape', x: 0, y: 0, width: W, height: H, rx: 12, ry: 12 }));
+                g.append(text(cx, cy + 4, n.name || 'State', 'node-title', 'middle'));
+            }
+        } else if (kind === 'package') {
+            const th = n._titleH || 18;
+            const tw = Math.max(50, Math.min(W - 6, Math.ceil(measure(n.name || 'package', '600 12px ' + FONT)) + 20));
+            g.append(el('rect', { class: 'container-body', x: 0, y: 0, width: W, height: H, rx: 2 }));
+            g.append(el('rect', { class: 'container-head', x: 0, y: 0, width: tw, height: th }));
+            g.append(el('line', { class: 'compartment-sep', x1: 0, y1: th, x2: tw, y2: th }));
+            g.append(text(8, th - 5, n.name || 'package', 'node-title', 'start'));
         } else if (kind === 'initial') {
             g.append(el('circle', { class: 'pseudo-fill', cx, cy, r: W / 2 - 1 }));
         } else if (kind === 'final') {
@@ -1044,7 +1068,7 @@
         return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
     }
     function fitView() {
-        if (!isSeq()) state.nodes.forEach(layoutNode);
+        if (!isSeq()) { state.nodes.forEach(layoutNode); layoutContainers(); }
         const b = bbox(), pad = 40;
         const aw = canvas.clientWidth - pad * 2, ah = canvas.clientHeight - pad * 2;
         view.s = Math.max(0.15, Math.min(aw / b.w, ah / b.h, 1.5));
@@ -1097,8 +1121,11 @@
             if (!selNodes.has(id)) selNodes = new Set([id]);   // 単独選択（グループ内ならグループ維持）
             selection = { kind: 'node', id };
             refreshSelectionStyles(); renderPanel();
-            const start = {}; selNodes.forEach(nid => { const nn = nodeById(nid); start[nid] = { x: nn.x, y: nn.y }; });
-            drag = { kind: 'node', ids: [...selNodes], start, ox: pt.x, oy: pt.y, moved: false };
+            const topIds = [...selNodes];                       // 掴んだノード（子孫は付随）
+            const all = new Set();
+            topIds.forEach(tid => { all.add(tid); descendants(tid).forEach(d => all.add(d.id)); });
+            const start = {}; all.forEach(nid => { const nn = nodeById(nid); start[nid] = { x: nn.x, y: nn.y }; });
+            drag = { kind: 'node', ids: [...all], topIds, start, ox: pt.x, oy: pt.y, moved: false };
             canvas.setPointerCapture(e.pointerId);
         } else if (edgeEl) {
             selNodes = new Set();
@@ -1154,7 +1181,16 @@
                 createEdge(drag.from, targetNode.dataset.node, drag.rel);
             }
         } else if (drag.kind === 'node' && drag.moved) {
-            commit(); save();
+            // ドロップ位置でコンテナへの所属を更新（掴んだノードのみ）
+            let changed = false;
+            for (const id of (drag.topIds || [])) {
+                const n = nodeById(id); if (!n || n.kind === 'note') continue;
+                const exclude = new Set([id, ...descendants(id).map(d => d.id)]);
+                const target = reparentTarget(n.x + n.w / 2, n.y + n.h / 2, exclude) || undefined;
+                if ((n.parent || undefined) !== target) { n.parent = target; changed = true; }
+            }
+            commit(); render(); save();
+            if (changed) renderPanel();
         } else if (drag.kind === 'marquee') {
             drag.rect.remove();
             const b = drag.box;
@@ -1184,6 +1220,50 @@
     function edgeById(id) { return state.edges.find(e => e.id === id); }
     function itemCount() { return isSeq() ? (state.participants || []).length : state.nodes.length; }
 
+    /* ---- 入れ子コンテナ（複合状態 / パッケージ / 境界） ---- */
+    const CPAD = 16, CTITLE = 26;
+    function childrenOf(id) { return state.nodes.filter(n => n.parent === id); }
+    function hasChildren(n) { return state.nodes.some(x => x.parent === n.id); }
+    function nodeDepth(n) { let d = 0, p = n, g = 0; while (p && p.parent && g++ < 50) { p = nodeById(p.parent); if (!p) break; d++; } return d; }
+    function descendants(id) { const out = []; const stack = [id]; while (stack.length) { const cur = stack.pop(); for (const c of state.nodes) if (c.parent === cur) { out.push(c); stack.push(c.id); } } return out; }
+    function isContainerKind(kind) { return kind === 'package' || kind === 'boundary'; }
+    function drawsAsContainer(n) { return isContainerKind(n.kind) || (n.kind === 'state' && hasChildren(n)); }
+    function canContain(c) {
+        const t = diagramType();
+        if (t === 'class') return c.kind === 'package';
+        if (t === 'state') return c.kind === 'state';
+        if (t === 'usecase' || t === 'component') return c.kind === 'boundary';
+        return false;
+    }
+    function layoutContainers() {
+        const conts = state.nodes.filter(n => hasChildren(n));
+        conts.sort((a, b) => nodeDepth(b) - nodeDepth(a));   // 深い順に確定
+        for (const c of conts) {
+            const kids = childrenOf(c.id);
+            let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+            for (const k of kids) { x1 = Math.min(x1, k.x); y1 = Math.min(y1, k.y); x2 = Math.max(x2, k.x + k.w); y2 = Math.max(y2, k.y + k.h); }
+            c.x = x1 - CPAD; c.y = y1 - CPAD - CTITLE; c.w = (x2 - x1) + CPAD * 2; c.h = (y2 - y1) + CPAD * 2 + CTITLE; c._titleH = CTITLE;
+        }
+    }
+    function containerCandidateRect(c, draggedSet) {
+        const kids = childrenOf(c.id).filter(k => !draggedSet.has(k.id));
+        if (!kids.length) return isContainerKind(c.kind) ? { x: c.x, y: c.y, w: c.w, h: c.h } : null;
+        let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+        for (const k of kids) { x1 = Math.min(x1, k.x); y1 = Math.min(y1, k.y); x2 = Math.max(x2, k.x + k.w); y2 = Math.max(y2, k.y + k.h); }
+        return { x: x1 - CPAD, y: y1 - CPAD - CTITLE, w: (x2 - x1) + CPAD * 2, h: (y2 - y1) + CPAD * 2 + CTITLE };
+    }
+    function reparentTarget(px, py, draggedSet) {
+        let best = null, bestDepth = -1;
+        for (const c of state.nodes) {
+            if (draggedSet.has(c.id) || !canContain(c)) continue;
+            const r = containerCandidateRect(c, draggedSet);
+            if (r && px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) {
+                const d = nodeDepth(c); if (d > bestDepth) { bestDepth = d; best = c.id; }
+            }
+        }
+        return best;
+    }
+
     function nodeDefaults(kind) {
         switch (kind) {
             case 'class': return { name: 'NewClass', stereotype: '', attributes: ['- field: Type'], methods: ['+ method(): void'] };
@@ -1196,6 +1276,7 @@
             case 'component': return { name: 'Component' };
             case 'interface': return { name: 'Interface' };
             case 'note': return { text: 'メモ' };
+            case 'package': return { name: 'package', w: 160, h: 110 };
         }
         return { name: '' };
     }
@@ -1239,7 +1320,8 @@
         if (!selection && !selNodes.size) return;
         commit();
         if (selNodes.size) {
-            const ids = selNodes;
+            const ids = new Set(selNodes);
+            selNodes.forEach(id => descendants(id).forEach(d => ids.add(d.id)));  // 子孫も削除
             state.nodes = state.nodes.filter(n => !ids.has(n.id));
             state.edges = state.edges.filter(e => !ids.has(e.from) && !ids.has(e.to));
             selNodes = new Set();
@@ -1288,17 +1370,26 @@
             c.id = uid('n'); c.x = o.x + dx; c.y = o.y + dy;
             map.set(id, c.id); return c;
         }).filter(Boolean);
-        // ノートのアンカー先も選択内なら付け替え、外なら解除
-        for (const c of newNodes) if (c.kind === 'note' && c.anchor) { if (map.has(c.anchor)) c.anchor = map.get(c.anchor); else delete c.anchor; }
+        // ノートのアンカー先・親コンテナを複製内に付け替え（外なら維持/解除）
+        for (const c of newNodes) {
+            if (c.kind === 'note' && c.anchor) { if (map.has(c.anchor)) c.anchor = map.get(c.anchor); else delete c.anchor; }
+            if (c.parent && map.has(c.parent)) c.parent = map.get(c.parent);
+        }
         // 両端とも選択内にある関連だけ複製
         const newEdges = state.edges.filter(e => map.has(e.from) && map.has(e.to))
             .map(e => Object.assign(JSON.parse(JSON.stringify(e)), { id: uid('e'), from: map.get(e.from), to: map.get(e.to) }));
         return { newNodes, newEdges };
     }
 
+    function withDescendants(baseIds) {
+        const s = new Set(baseIds);
+        baseIds.forEach(id => descendants(id).forEach(d => s.add(d.id)));
+        return [...s];
+    }
     function duplicateSelection() {
-        const ids = selNodes.size ? [...selNodes] : (selection && selection.kind === 'node' ? [selection.id] : []);
+        let ids = selNodes.size ? [...selNodes] : (selection && selection.kind === 'node' ? [selection.id] : []);
         if (!ids.length) return;
+        ids = withDescendants(ids);
         commit();
         const { newNodes, newEdges } = cloneNodes(ids, 24, 24);
         state.nodes.push(...newNodes); state.edges.push(...newEdges);
@@ -1309,8 +1400,9 @@
     }
 
     function copySelection() {
-        const ids = selNodes.size ? [...selNodes] : (selection && selection.kind === 'node' ? [selection.id] : []);
+        let ids = selNodes.size ? [...selNodes] : (selection && selection.kind === 'node' ? [selection.id] : []);
         if (!ids.length) return;
+        ids = withDescendants(ids);
         const { newNodes, newEdges } = cloneNodes(ids, 0, 0);
         clipboard = { nodes: newNodes, edges: newEdges };
         toast(ids.length + '件をコピーしました');
@@ -1321,6 +1413,10 @@
         commit();
         const idmap = new Map();
         const ns = clipboard.nodes.map(o => { const c = JSON.parse(JSON.stringify(o)); const nid = uid('n'); idmap.set(o.id, nid); c.id = nid; c.x += 28; c.y += 28; return c; });
+        for (const c of ns) {                              // 親・アンカーを貼り付け内で付け替え
+            if (c.parent) c.parent = idmap.has(c.parent) ? idmap.get(c.parent) : undefined;
+            if (c.anchor) c.anchor = idmap.has(c.anchor) ? idmap.get(c.anchor) : undefined;
+        }
         const es = clipboard.edges.map(o => Object.assign(JSON.parse(JSON.stringify(o)), { id: uid('e'), from: idmap.get(o.from), to: idmap.get(o.to) }));
         state.nodes.push(...ns); state.edges.push(...es);
         // 次回ペーストでさらにずれるよう保持を更新
@@ -1492,6 +1588,13 @@
                 $('f_name').oninput = upd;
                 $('f_name').addEventListener('change', () => { recordEdit(); save(); });
                 $('f_del').onclick = deleteSelection;
+            }
+            if (n.parent) {                            // コンテナ所属なら取り出しボタン
+                const b = document.createElement('button');
+                b.className = 'btn'; b.style.cssText = 'width:100%;margin-top:8px';
+                b.innerHTML = '<span class="ico">⏏</span> コンテナから出す';
+                b.onclick = () => { commit(); delete n.parent; render(); renderPanel(); save(); };
+                props.append(b);
             }
         } else {
             const e = edgeById(selection.id); if (!e) { select(null); return; }
@@ -1675,19 +1778,29 @@
         return s;
     }
 
+    function classDecl(n, ind) {
+        let kw = 'class', stereo = n.stereotype || '';
+        if (stereo === 'interface') { kw = 'interface'; stereo = ''; }
+        else if (stereo === 'abstract') { kw = 'abstract class'; stereo = ''; }
+        const head = kw + ' ' + ident(n.name) + (stereo ? ` <<${stereo}>>` : '');
+        const body = [...(n.attributes || []), ...(n.methods || [])];
+        if (body.length) return [ind + head + ' {', ...body.map(m => ind + '  ' + m), ind + '}'];
+        return [ind + head];
+    }
+    function emitClassRegion(parentId, depth) {
+        const ind = '  '.repeat(depth), out = [];
+        for (const n of state.nodes.filter(x => (x.parent || undefined) === parentId && x.kind !== 'note')) {
+            if (n.kind === 'package') {
+                out.push(`${ind}package ${ident(n.name)} {`);
+                out.push(...emitClassRegion(n.id, depth + 1));
+                out.push(`${ind}}`);
+            } else out.push(...classDecl(n, ind));
+        }
+        return out;
+    }
     function toDSL() {
         const nameOf = id => { const n = nodeById(id); return n ? n.name : id; };
-        const L = ['@startuml'];
-        for (const n of state.nodes) {
-            if (n.kind === 'note') continue;            // ノートはDSL対象外
-            let kw = 'class', stereo = n.stereotype || '';
-            if (stereo === 'interface') { kw = 'interface'; stereo = ''; }
-            else if (stereo === 'abstract') { kw = 'abstract class'; stereo = ''; }
-            const head = kw + ' ' + ident(n.name) + (stereo ? ` <<${stereo}>>` : '');
-            const body = [...(n.attributes || []), ...(n.methods || [])];
-            if (body.length) { L.push(head + ' {'); body.forEach(m => L.push('  ' + m)); L.push('}'); }
-            else L.push(head);
-        }
+        const L = ['@startuml', ...emitClassRegion(undefined, 0)];
         if (state.nodes.length && state.edges.length) L.push('');
         for (const e of state.edges) L.push(edgeToDSL(e, nameOf));
         L.push('@enduml');
@@ -1706,9 +1819,12 @@
     const REL_RE = /^("([^"]+)"|[\w]+)\s*(?:"([^"]*)")?\s*(<\|--|--\|>|<\|\.\.|\.\.\|>|\.\.>|<\.\.|-->|<--|\*--|--\*|o--|--o|\.\.|--)\s*(?:"([^"]*)")?\s*("([^"]+)"|[\w]+)\s*(?::\s*(.+))?$/;
     const CLASS_RE = /^(abstract\s+class|abstract|class|interface|enum)\s+("([^"]+)"|[\w]+)\s*(?:<<\s*([^>]+?)\s*>>)?\s*(\{)?\s*$/i;
 
+    const PKG_RE = /^package\s+(?:"([^"]+)"|(\S+))\s*\{\s*$/i;
+
     function parseDSL(src) {
         const nodes = [], edges = [], map = new Map();
-        const ensure = name => { if (!map.has(name)) { const o = { name, stereotype: '', attributes: [], methods: [] }; map.set(name, o); nodes.push(o); } return map.get(name); };
+        const cstack = [];   // パッケージ名スタック
+        const ensure = name => { if (!map.has(name)) { const o = { name, kind: 'class', parent: cstack[cstack.length - 1] || null, stereotype: '', attributes: [], methods: [] }; map.set(name, o); nodes.push(o); } return map.get(name); };
         let cur = null;
         for (const raw of src.split('\n')) {
             const line = raw.trim();
@@ -1718,6 +1834,9 @@
                 if (/[()]/.test(line)) cur.methods.push(line); else cur.attributes.push(line);
                 continue;
             }
+            const pm = line.match(PKG_RE);
+            if (pm) { const name = pm[1] || pm[2]; const o = { name, kind: 'package', parent: cstack[cstack.length - 1] || null }; nodes.push(o); map.set(name, o); cstack.push(name); continue; }
+            if (line === '}') { if (cstack.length) cstack.pop(); continue; }
             const cm = line.match(CLASS_RE);
             if (cm) {
                 const name = cm[3] || cm[2];
@@ -1763,14 +1882,17 @@
         const idByName = new Map();
         const placed = [];
         const newNodes = parsed.nodes.map(pn => {
-            const ex = state.nodes.find(n => n.name === pn.name);
+            const ex = state.nodes.find(n => n.name === pn.name && n.kind !== 'note');
             const id = ex ? ex.id : uid('n');
             idByName.set(pn.name, id);
-            let pos;
-            if (ex) pos = { x: ex.x, y: ex.y }; else pos = nextFreePos(placed.concat(state.nodes));
+            const pos = ex ? { x: ex.x, y: ex.y } : nextFreePos(placed.concat(state.nodes));
             placed.push({ x: pos.x, y: pos.y, w: 160, h: 100 });
-            return { id, x: pos.x, y: pos.y, name: pn.name, stereotype: pn.stereotype, attributes: pn.attributes, methods: pn.methods };
+            const o = { id, x: pos.x, y: pos.y, name: pn.name, kind: pn.kind || 'class' };
+            if (o.kind === 'package') { o.w = (ex && ex.w) || 160; o.h = (ex && ex.h) || 110; }
+            else { o.stereotype = pn.stereotype || ''; o.attributes = pn.attributes || []; o.methods = pn.methods || []; }
+            return o;
         });
+        parsed.nodes.forEach((pn, i) => { if (pn.parent && idByName.has(pn.parent)) newNodes[i].parent = idByName.get(pn.parent); });
         const newEdges = parsed.edges.filter(e => idByName.has(e.fromName) && idByName.has(e.toName))
             .map(e => ({ id: uid('e'), from: idByName.get(e.fromName), to: idByName.get(e.toName), type: e.type, fromMult: e.fromMult || '', toMult: e.toMult || '', label: e.label || '' }));
         // ノート（DSL対象外）は維持
@@ -1868,39 +1990,47 @@
         const tok = n => {
             if (n.kind === 'initial' || n.kind === 'final') return '[*]';
             const name = n.name || 'State';
-            if (/\s/.test(name) || name === '') { if (!aliasMap.has(n.id)) aliasMap.set(n.id, { alias: 'S' + (++ac), name }); return aliasMap.get(n.id).alias; }
+            if (/\s/.test(name) || name === '') { if (!aliasMap.has(n.id)) aliasMap.set(n.id, 'S' + (++ac)); return aliasMap.get(n.id); }
             return name;
         };
-        const elines = edges.map(e => { const a = byId(e.from), b = byId(e.to); return (a && b) ? { ta: tok(a), tb: tok(b), label: e.label } : null; }).filter(Boolean);
-        const used = new Set(); edges.forEach(e => { used.add(e.from); used.add(e.to); });
-        const isolated = nodes.filter(n => n.kind === 'state' && !used.has(n.id)).map(n => ({ tok: tok(n) }));
-        const L = ['@startuml'];
-        for (const { alias, name } of aliasMap.values()) L.push(`state "${name}" as ${alias}`);
-        if (aliasMap.size) L.push('');
-        elines.forEach(e => L.push(`${e.ta} --> ${e.tb}${e.label ? ' : ' + e.label : ''}`));
-        isolated.forEach(s => L.push(`state ${s.tok}`));
+        const declName = n => { const nm = n.name || 'State'; return (/\s/.test(nm) || nm === '') ? `"${nm}" as ${tok(n)}` : nm; };
+        function region(parentId, depth) {
+            const ind = '  '.repeat(depth), out = [];
+            for (const n of nodes.filter(x => (x.parent || undefined) === parentId && x.kind === 'state')) {
+                if (hasChildren(n)) { out.push(`${ind}state ${declName(n)} {`); out.push(...region(n.id, depth + 1)); out.push(`${ind}}`); }
+                else out.push(`${ind}state ${declName(n)}`);
+            }
+            return out;
+        }
+        const L = ['@startuml', ...region(undefined, 0)];
+        if (edges.length) L.push('');
+        edges.forEach(e => { const a = byId(e.from), b = byId(e.to); if (a && b) L.push(`${tok(a)} --> ${tok(b)}${e.label ? ' : ' + e.label : ''}`); });
         L.push('@enduml');
         return L.join('\n');
     }
 
     function parseStateDSL(src) {
-        const nodes = [], edges = [], byName = new Map(), byAlias = new Map();
+        const nodes = [], edges = [], byName = new Map(), byAlias = new Map(), cstack = [];
         let initialId = null, finalId = null;
+        const cur = () => cstack.length ? cstack[cstack.length - 1] : null;
         const ensureState = token => {
             if (byAlias.has(token)) return byAlias.get(token);
             if (byName.has(token)) return byName.get(token);
-            const o = { id: uid('n'), kind: 'state', name: token, attributes: [], methods: [] };
+            const o = { id: uid('n'), kind: 'state', name: token, parent: cur(), attributes: [], methods: [] };
             nodes.push(o); byName.set(token, o); return o;
         };
-        const initNode = () => { if (!initialId) { const o = { id: uid('n'), kind: 'initial', name: '' }; nodes.push(o); initialId = o.id; } return initialId; };
-        const finalNode = () => { if (!finalId) { const o = { id: uid('n'), kind: 'final', name: '' }; nodes.push(o); finalId = o.id; } return finalId; };
+        const initNode = () => { if (!initialId) { const o = { id: uid('n'), kind: 'initial', name: '', parent: cur() }; nodes.push(o); initialId = o.id; } return initialId; };
+        const finalNode = () => { if (!finalId) { const o = { id: uid('n'), kind: 'final', name: '', parent: cur() }; nodes.push(o); finalId = o.id; } return finalId; };
         for (const raw of src.split('\n')) {
             const line = raw.trim();
             if (!line || /^@(start|end)uml/i.test(line) || line.startsWith("'")) continue;
+            let cm = line.match(/^state\s+(?:"([^"]+)"\s+as\s+(\w+)|"([^"]+)"|(\S+?))\s*\{\s*$/i);
+            if (cm) { const name = cm[1] || cm[3] || cm[4], alias = cm[2]; const o = { id: uid('n'), kind: 'state', name, parent: cur(), attributes: [], methods: [] }; nodes.push(o); byName.set(name, o); if (alias) byAlias.set(alias, o); cstack.push(o.id); continue; }
+            if (line === '}') { if (cstack.length) cstack.pop(); continue; }
             let dm = line.match(/^state\s+"([^"]+)"\s+as\s+(\w+)\s*$/i);
-            if (dm) { const o = { id: uid('n'), kind: 'state', name: dm[1], attributes: [], methods: [] }; nodes.push(o); byAlias.set(dm[2], o); byName.set(dm[1], o); continue; }
+            if (dm) { const o = { id: uid('n'), kind: 'state', name: dm[1], parent: cur(), attributes: [], methods: [] }; nodes.push(o); byAlias.set(dm[2], o); byName.set(dm[1], o); continue; }
             let ds = line.match(/^state\s+(?:"([^"]+)"|(\S+))\s*$/i);
-            if (ds) { const name = ds[1] || ds[2]; if (!byName.has(name) && !byAlias.has(name)) { const o = { id: uid('n'), kind: 'state', name, attributes: [], methods: [] }; nodes.push(o); byName.set(name, o); } continue; }
+            if (ds) { const name = ds[1] || ds[2]; if (!byName.has(name) && !byAlias.has(name)) ensureState(name); continue; }
             if (/^note\b/i.test(line)) continue;
             let tm = line.match(/^(\[\*\]|"[^"]+"|[^\s:]+)\s*-+>\s*(\[\*\]|"[^"]+"|[^\s:]+)\s*(?::\s*(.*))?$/);
             if (tm) {
@@ -1950,8 +2080,17 @@
         const nodes = state.nodes || [], edges = state.edges || [];
         const real = nodes.filter(n => n.kind !== 'note');
         const aliasOf = new Map(); real.forEach((n, i) => aliasOf.set(n.id, 'n' + (i + 1)));
-        const L = ['@startuml'];
-        real.forEach((n, i) => L.push(`${KIND_KW[n.kind] || 'rectangle'} "${(n.name || '').replace(/"/g, '')}" as n${i + 1}`));
+        const isCont = n => n.kind === 'boundary' || n.kind === 'package';
+        function region(parentId, depth) {
+            const ind = '  '.repeat(depth), out = [];
+            for (const n of real.filter(x => (x.parent || undefined) === parentId)) {
+                const decl = `${ind}${KIND_KW[n.kind] || 'rectangle'} "${(n.name || '').replace(/"/g, '')}" as ${aliasOf.get(n.id)}`;
+                if (isCont(n) && hasChildren(n)) { out.push(decl + ' {'); out.push(...region(n.id, depth + 1)); out.push(`${ind}}`); }
+                else out.push(decl);
+            }
+            return out;
+        }
+        const L = ['@startuml', ...region(undefined, 0)];
         if (real.length && edges.length) L.push('');
         const a = id => aliasOf.get(id) || id;
         edges.forEach(e => { if (aliasOf.has(e.from) && aliasOf.has(e.to)) L.push(edgeGraphLine(e, a)); });
@@ -1960,8 +2099,9 @@
     }
     function parseGraphDSL(type, src) {
         const defaultKind = type === 'usecase' ? 'usecase' : 'component';
-        const nodes = [], edges = [], nameMap = new Map(), aliasMap = new Map();
-        const ensureN = (name, kind) => { if (nameMap.has(name)) return nameMap.get(name); const o = { name, kind: kind || defaultKind }; nodes.push(o); nameMap.set(name, o); return o; };
+        const nodes = [], edges = [], nameMap = new Map(), aliasMap = new Map(), cstack = [];
+        const cur = () => cstack.length ? cstack[cstack.length - 1].name : null;
+        const ensureN = (name, kind) => { if (nameMap.has(name)) return nameMap.get(name); const o = { name, kind: kind || defaultKind, parent: cur() }; nodes.push(o); nameMap.set(name, o); return o; };
         const resolve = tok => {
             let m;
             if (m = tok.match(/^\[(.+)\]$/)) return ensureN(m[1].trim(), 'component');
@@ -1974,9 +2114,10 @@
         };
         for (const raw of src.split('\n')) {
             const line = raw.trim();
-            if (!line || /^@(start|end)uml/i.test(line) || line.startsWith("'") || line === '}') continue;
-            const dm = line.match(/^(component|interface|rectangle|actor|usecase|database|node|cloud|package|boundary|entity|control)\s+(?:"([^"]+)"|([^\s{]+))(?:\s+as\s+(\w+))?\s*\{?\s*$/i);
-            if (dm) { const kind = KW_KIND[dm[1].toLowerCase()] || defaultKind; const o = ensureN(dm[2] || dm[3], kind); o.kind = kind; if (dm[4]) aliasMap.set(dm[4], o); continue; }
+            if (!line || /^@(start|end)uml/i.test(line) || line.startsWith("'")) continue;
+            if (line === '}') { if (cstack.length) cstack.pop(); continue; }
+            const dm = line.match(/^(component|interface|rectangle|actor|usecase|database|node|cloud|package|boundary|entity|control)\s+(?:"([^"]+)"|([^\s{]+))(?:\s+as\s+(\w+))?\s*(\{)?\s*$/i);
+            if (dm) { const kind = KW_KIND[dm[1].toLowerCase()] || defaultKind; const o = ensureN(dm[2] || dm[3], kind); o.kind = kind; if (dm[4]) aliasMap.set(dm[4], o); if (dm[5] === '{') cstack.push(o); continue; }
             if (/^note\b/i.test(line)) continue;
             const rm = line.match(/^(.*?)\s*(<\|--|--\|>|\.\.>|<\.\.|-->|<--|--|\.\.)\s*(.*?)\s*(?::\s*(.*))?$/);
             if (rm && rm[1] && rm[3]) {
@@ -2007,8 +2148,10 @@
             placed.push({ x: pos.x, y: pos.y, w: 140, h: 70 });
             const o = { id, kind: pn.kind, name: pn.name, x: pos.x, y: pos.y };
             if (pn.kind === 'boundary') { o.w = (ex && ex.w) || 240; o.h = (ex && ex.h) || 160; }
+            else if (pn.kind === 'package') { o.w = (ex && ex.w) || 160; o.h = (ex && ex.h) || 110; }
             return o;
         });
+        parsed.nodes.forEach((pn, i) => { if (pn.parent && idByName.has(pn.parent)) newNodes[i].parent = idByName.get(pn.parent); });
         const newEdges = parsed.edges.filter(e => idByName.has(e.fromName) && idByName.has(e.toName))
             .map(e => ({ id: uid('e'), from: idByName.get(e.fromName), to: idByName.get(e.toName), type: e.type, fromMult: '', toMult: '', label: e.label || '' }));
         newNodes.push(...existing.filter(n => n.kind === 'note'));
@@ -2108,6 +2251,8 @@
         .note-fold{fill:none;stroke:${NS};stroke-width:1}
         .note-text{fill:${TX};font:12px ${FONT}}
         .note-anchor{stroke:${NS};stroke-width:1;stroke-dasharray:4 3;fill:none;opacity:.75}
+        .container-body{fill:none;stroke:${NS};stroke-width:1.3}
+        .container-head{fill:${NH};stroke:none}
         .seq-life{stroke:${NS};stroke-width:1.1;stroke-dasharray:4 4}
         .seq-line{stroke:${LN};stroke-width:1.4;fill:none}
         .seq-line.dashed{stroke-dasharray:7 5}
@@ -2122,7 +2267,7 @@
         .edge-hit,.temp-line,.marquee,.seq-hit{display:none}`;
     }
     function buildSVG() {
-        if (isSeq()) renderSequence(); else state.nodes.forEach(layoutNode);
+        if (isSeq()) renderSequence(); else { state.nodes.forEach(layoutNode); layoutContainers(); }
         const b = bbox(), pad = 24;
         const W = Math.ceil(b.w + pad * 2), H = Math.ceil(b.h + pad * 2);
         const inner = edgesLayer.outerHTML + nodesLayer.outerHTML;
@@ -2362,6 +2507,12 @@ ${inner}
         '  ・右パネルで名前・属性・操作・多重度・ラベルを編集',
         '  ・「ノート」で付箋（注釈）を全図種に配置。プロパティの',
         '    「接続先」で要素へ破線アンカー線を結べます',
+        '',
+        '【入れ子コンテナ（複合状態 / パッケージ / 境界）】',
+        '  ・ノードをコンテナの内側へドラッグすると所属（中身ごと移動）',
+        '  ・コンテナは中身に合わせて自動サイズ。プロパティの',
+        '    「コンテナから出す」で取り出し',
+        '  ・テキストは package X{ } / state X{ } / rectangle "X"{ } で入れ子',
         '',
         '【シーケンス図】',
         '  ・ライフライン/アクターでクリックして追加',
