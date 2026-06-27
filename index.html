@@ -1896,14 +1896,103 @@
         render(); renderPanel(); save();
     }
 
+    /* ---- ユースケース図 / コンポーネント図 DSL（共通グラフ） ---- */
+    const KIND_KW = { component: 'component', interface: 'interface', boundary: 'rectangle', actor: 'actor', usecase: 'usecase' };
+    const KW_KIND = { component: 'component', interface: 'interface', rectangle: 'boundary', actor: 'actor', usecase: 'usecase', database: 'component', node: 'component', cloud: 'boundary', package: 'boundary', boundary: 'boundary', entity: 'component', control: 'component' };
+
+    function edgeGraphLine(e, a) {
+        const f = a(e.from), t = a(e.to);
+        switch (e.type) {
+            case 'inheritance': return `${f} --|> ${t}`;
+            case 'include': return `${f} ..> ${t} : <<include>>`;
+            case 'extend': return `${f} ..> ${t} : <<extend>>`;
+            case 'dependency': return `${f} ..> ${t}${e.label ? ' : ' + e.label : ''}`;
+            case 'directed': return `${f} --> ${t}${e.label ? ' : ' + e.label : ''}`;
+            default: return `${f} -- ${t}${e.label ? ' : ' + e.label : ''}`;
+        }
+    }
+    function toGraphDSL() {
+        const nodes = state.nodes || [], edges = state.edges || [];
+        const real = nodes.filter(n => n.kind !== 'note');
+        const aliasOf = new Map(); real.forEach((n, i) => aliasOf.set(n.id, 'n' + (i + 1)));
+        const L = ['@startuml'];
+        real.forEach((n, i) => L.push(`${KIND_KW[n.kind] || 'rectangle'} "${(n.name || '').replace(/"/g, '')}" as n${i + 1}`));
+        if (real.length && edges.length) L.push('');
+        const a = id => aliasOf.get(id) || id;
+        edges.forEach(e => { if (aliasOf.has(e.from) && aliasOf.has(e.to)) L.push(edgeGraphLine(e, a)); });
+        L.push('@enduml');
+        return L.join('\n');
+    }
+    function parseGraphDSL(type, src) {
+        const defaultKind = type === 'usecase' ? 'usecase' : 'component';
+        const nodes = [], edges = [], nameMap = new Map(), aliasMap = new Map();
+        const ensureN = (name, kind) => { if (nameMap.has(name)) return nameMap.get(name); const o = { name, kind: kind || defaultKind }; nodes.push(o); nameMap.set(name, o); return o; };
+        const resolve = tok => {
+            let m;
+            if (m = tok.match(/^\[(.+)\]$/)) return ensureN(m[1].trim(), 'component');
+            if (m = tok.match(/^\((.+)\)$/)) return ensureN(m[1].trim(), 'usecase');
+            if (m = tok.match(/^:(.+):$/)) return ensureN(m[1].trim(), 'actor');
+            if (m = tok.match(/^"(.+)"$/)) return ensureN(m[1], defaultKind);
+            if (aliasMap.has(tok)) return aliasMap.get(tok);
+            if (nameMap.has(tok)) return nameMap.get(tok);
+            return ensureN(tok, defaultKind);
+        };
+        for (const raw of src.split('\n')) {
+            const line = raw.trim();
+            if (!line || /^@(start|end)uml/i.test(line) || line.startsWith("'") || line === '}') continue;
+            const dm = line.match(/^(component|interface|rectangle|actor|usecase|database|node|cloud|package|boundary|entity|control)\s+(?:"([^"]+)"|([^\s{]+))(?:\s+as\s+(\w+))?\s*\{?\s*$/i);
+            if (dm) { const kind = KW_KIND[dm[1].toLowerCase()] || defaultKind; const o = ensureN(dm[2] || dm[3], kind); o.kind = kind; if (dm[4]) aliasMap.set(dm[4], o); continue; }
+            if (/^note\b/i.test(line)) continue;
+            const rm = line.match(/^(.*?)\s*(<\|--|--\|>|\.\.>|<\.\.|-->|<--|--|\.\.)\s*(.*?)\s*(?::\s*(.*))?$/);
+            if (rm && rm[1] && rm[3]) {
+                const op = rm[2]; let label = (rm[4] || '').trim();
+                const ln = resolve(rm[1].trim()), rn = resolve(rm[3].trim());
+                let ty, from, to;
+                if (op === '--|>') { ty = 'inheritance'; from = ln; to = rn; }
+                else if (op === '<|--') { ty = 'inheritance'; from = rn; to = ln; }
+                else if (op === '<..') { ty = 'dependency'; from = rn; to = ln; }
+                else if (op === '..>' || op === '..') { ty = 'dependency'; from = ln; to = rn; }
+                else if (op === '<--') { ty = 'directed'; from = rn; to = ln; }
+                else if (op === '-->') { ty = 'directed'; from = ln; to = rn; }
+                else { ty = 'association'; from = ln; to = rn; }
+                if (/<<\s*include\s*>>/i.test(label)) { ty = 'include'; label = '«include»'; }
+                else if (/<<\s*extend\s*>>/i.test(label)) { ty = 'extend'; label = '«extend»'; }
+                edges.push({ fromName: from.name, toName: to.name, type: ty, label });
+            }
+        }
+        return { nodes, edges };
+    }
+    function applyGraphParsed(parsed) {
+        const existing = state.nodes || [], placed = [], idByName = new Map();
+        const newNodes = parsed.nodes.map(pn => {
+            const ex = existing.find(n => n.kind !== 'note' && n.name === pn.name);
+            const id = ex ? ex.id : uid('n');
+            idByName.set(pn.name, id);
+            const pos = ex ? { x: ex.x, y: ex.y } : nextFreePos(placed.concat(existing));
+            placed.push({ x: pos.x, y: pos.y, w: 140, h: 70 });
+            const o = { id, kind: pn.kind, name: pn.name, x: pos.x, y: pos.y };
+            if (pn.kind === 'boundary') { o.w = (ex && ex.w) || 240; o.h = (ex && ex.h) || 160; }
+            return o;
+        });
+        const newEdges = parsed.edges.filter(e => idByName.has(e.fromName) && idByName.has(e.toName))
+            .map(e => ({ id: uid('e'), from: idByName.get(e.fromName), to: idByName.get(e.toName), type: e.type, fromMult: '', toMult: '', label: e.label || '' }));
+        newNodes.push(...existing.filter(n => n.kind === 'note'));
+        state.nodes = newNodes; state.edges = newEdges;
+        selection = null; selNodes = new Set();
+        render(); renderPanel(); save();
+    }
+
     function setDslStatus(ok, msg) {
         const s = $('dslStatus');
         s.className = 'dsl-status ' + (ok ? 'ok' : 'err');
         s.textContent = msg || (ok ? 'OK' : 'エラー');
     }
-    function canText(t) { return t === 'class' || t === 'sequence' || t === 'state'; }
+    function canText(t) { return !!DIAGRAMS[t]; }   // 全図種対応
     function textCapable() { return canText(diagramType()); }
-    function currentDSL() { return isSeq() ? toSeqDSL() : diagramType() === 'state' ? toStateDSL() : toDSL(); }
+    function currentDSL() {
+        const t = diagramType();
+        return isSeq() ? toSeqDSL() : t === 'state' ? toStateDSL() : t === 'class' ? toDSL() : toGraphDSL();
+    }
     function syncTextFromDiagram() {
         if (!drawerOpen || !textCapable() || document.activeElement === dsl) return;
         dsl.value = currentDSL();
@@ -1923,10 +2012,14 @@
                     const parsed = parseStateDSL(dsl.value);
                     applyStateParsed(parsed);
                     setDslStatus(true, `${parsed.nodes.length}状態 / ${parsed.edges.length}遷移`);
-                } else {
+                } else if (diagramType() === 'class') {
                     const parsed = parseDSL(dsl.value);
                     applyParsed(parsed);
                     setDslStatus(true, `${parsed.nodes.length}クラス / ${parsed.edges.length}関連`);
+                } else {
+                    const parsed = parseGraphDSL(diagramType(), dsl.value);
+                    applyGraphParsed(parsed);
+                    setDslStatus(true, `${parsed.nodes.length}要素 / ${parsed.edges.length}関連`);
                 }
             } catch (err) { setDslStatus(false, '解析エラー'); }
         }, 350);
@@ -2247,11 +2340,12 @@ ${inner}
         '  ・2件以上選択でプロパティに整列ボタン（左/中央/右/上下/等間隔）',
         '  ・🧲 グリッド吸着、▦ 自動整列（継承の階層レイアウト）',
         '',
-        '【テキスト双方向同期（クラス図・シーケンス図・状態遷移図）】',
-        '  ・</>テキスト でPlantUML風コードを表示',
-        '  ・図の編集→テキストに即反映、テキスト編集→図に反映',
-        '  ・シーケンスは A -> B : msg / alt…else…end / loop / opt 等',
-        '  ・状態遷移は [*] --> 待機 / A --> B : event',
+        '【テキスト双方向同期（全5図種）】',
+        '  ・</>テキスト でPlantUML風コードを表示（図⇄テキスト即時反映）',
+        '  ・シーケンス: A -> B : msg / alt…else…end / loop / opt',
+        '  ・状態遷移: [*] --> 待機 / A --> B : event',
+        '  ・ユースケース: 顧客 --> (ログイン) / (注文) ..> (X) : <<include>>',
+        '  ・コンポーネント: component "Web UI" / [A] ..> [B] : HTTP',
         '',
         '【ショートカット】',
         '  Delete / Backspace … 選択を削除',
