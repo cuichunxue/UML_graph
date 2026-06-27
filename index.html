@@ -1604,8 +1604,8 @@
         history = []; future = [];
         buildPalette();
         buildTemplateOptions();
-        $('textBtn').disabled = !(t === 'class' || t === 'sequence');
-        if (!(t === 'class' || t === 'sequence') && drawerOpen) toggleDrawer(false);
+        $('textBtn').disabled = !canText(t);
+        if (!canText(t) && drawerOpen) toggleDrawer(false);
         render(); renderPanel(); fitView(); save();
         $('diagramType').value = t;
     }
@@ -1825,13 +1825,85 @@
         render(); renderPanel(); save();
     }
 
+    /* ---- 状態遷移図 DSL（PlantUML風） ---- */
+    function toStateDSL() {
+        const nodes = state.nodes || [], edges = state.edges || [];
+        const byId = id => nodes.find(n => n.id === id);
+        const aliasMap = new Map(); let ac = 0;
+        const tok = n => {
+            if (n.kind === 'initial' || n.kind === 'final') return '[*]';
+            const name = n.name || 'State';
+            if (/\s/.test(name) || name === '') { if (!aliasMap.has(n.id)) aliasMap.set(n.id, { alias: 'S' + (++ac), name }); return aliasMap.get(n.id).alias; }
+            return name;
+        };
+        const elines = edges.map(e => { const a = byId(e.from), b = byId(e.to); return (a && b) ? { ta: tok(a), tb: tok(b), label: e.label } : null; }).filter(Boolean);
+        const used = new Set(); edges.forEach(e => { used.add(e.from); used.add(e.to); });
+        const isolated = nodes.filter(n => n.kind === 'state' && !used.has(n.id)).map(n => ({ tok: tok(n) }));
+        const L = ['@startuml'];
+        for (const { alias, name } of aliasMap.values()) L.push(`state "${name}" as ${alias}`);
+        if (aliasMap.size) L.push('');
+        elines.forEach(e => L.push(`${e.ta} --> ${e.tb}${e.label ? ' : ' + e.label : ''}`));
+        isolated.forEach(s => L.push(`state ${s.tok}`));
+        L.push('@enduml');
+        return L.join('\n');
+    }
+
+    function parseStateDSL(src) {
+        const nodes = [], edges = [], byName = new Map(), byAlias = new Map();
+        let initialId = null, finalId = null;
+        const ensureState = token => {
+            if (byAlias.has(token)) return byAlias.get(token);
+            if (byName.has(token)) return byName.get(token);
+            const o = { id: uid('n'), kind: 'state', name: token, attributes: [], methods: [] };
+            nodes.push(o); byName.set(token, o); return o;
+        };
+        const initNode = () => { if (!initialId) { const o = { id: uid('n'), kind: 'initial', name: '' }; nodes.push(o); initialId = o.id; } return initialId; };
+        const finalNode = () => { if (!finalId) { const o = { id: uid('n'), kind: 'final', name: '' }; nodes.push(o); finalId = o.id; } return finalId; };
+        for (const raw of src.split('\n')) {
+            const line = raw.trim();
+            if (!line || /^@(start|end)uml/i.test(line) || line.startsWith("'")) continue;
+            let dm = line.match(/^state\s+"([^"]+)"\s+as\s+(\w+)\s*$/i);
+            if (dm) { const o = { id: uid('n'), kind: 'state', name: dm[1], attributes: [], methods: [] }; nodes.push(o); byAlias.set(dm[2], o); byName.set(dm[1], o); continue; }
+            let ds = line.match(/^state\s+(?:"([^"]+)"|(\S+))\s*$/i);
+            if (ds) { const name = ds[1] || ds[2]; if (!byName.has(name) && !byAlias.has(name)) { const o = { id: uid('n'), kind: 'state', name, attributes: [], methods: [] }; nodes.push(o); byName.set(name, o); } continue; }
+            if (/^note\b/i.test(line)) continue;
+            let tm = line.match(/^(\[\*\]|"[^"]+"|[^\s:]+)\s*-+>\s*(\[\*\]|"[^"]+"|[^\s:]+)\s*(?::\s*(.*))?$/);
+            if (tm) {
+                const l = tm[1].replace(/^"|"$/g, ''), r = tm[2].replace(/^"|"$/g, ''), label = (tm[3] || '').trim();
+                const from = l === '[*]' ? initNode() : ensureState(l).id;
+                const to = r === '[*]' ? finalNode() : ensureState(r).id;
+                edges.push({ id: uid('e'), from, to, type: 'transition', fromMult: '', toMult: '', label });
+            }
+        }
+        return { nodes, edges };
+    }
+
+    function applyStateParsed(parsed) {
+        const existing = state.nodes || [], placed = [];
+        const findPos = pn => {
+            let ex;
+            if (pn.kind === 'initial') ex = existing.find(n => n.kind === 'initial');
+            else if (pn.kind === 'final') ex = existing.find(n => n.kind === 'final');
+            else ex = existing.find(n => n.kind !== 'note' && n.name === pn.name);
+            const pos = ex ? { x: ex.x, y: ex.y } : nextFreePos(placed.concat(existing));
+            placed.push({ x: pos.x, y: pos.y, w: 120, h: 60 });
+            return pos;
+        };
+        const newNodes = parsed.nodes.map(pn => Object.assign({}, pn, findPos(pn)));
+        newNodes.push(...existing.filter(n => n.kind === 'note'));
+        state.nodes = newNodes; state.edges = parsed.edges;
+        selection = null; selNodes = new Set();
+        render(); renderPanel(); save();
+    }
+
     function setDslStatus(ok, msg) {
         const s = $('dslStatus');
         s.className = 'dsl-status ' + (ok ? 'ok' : 'err');
         s.textContent = msg || (ok ? 'OK' : 'エラー');
     }
-    function textCapable() { return diagramType() === 'class' || isSeq(); }
-    function currentDSL() { return isSeq() ? toSeqDSL() : toDSL(); }
+    function canText(t) { return t === 'class' || t === 'sequence' || t === 'state'; }
+    function textCapable() { return canText(diagramType()); }
+    function currentDSL() { return isSeq() ? toSeqDSL() : diagramType() === 'state' ? toStateDSL() : toDSL(); }
     function syncTextFromDiagram() {
         if (!drawerOpen || !textCapable() || document.activeElement === dsl) return;
         dsl.value = currentDSL();
@@ -1847,6 +1919,10 @@
                     const parsed = parseSeqDSL(dsl.value);
                     applySeqParsed(parsed);
                     setDslStatus(true, `${parsed.participants.length}ライフライン / ${parsed.messages.length}メッセージ`);
+                } else if (diagramType() === 'state') {
+                    const parsed = parseStateDSL(dsl.value);
+                    applyStateParsed(parsed);
+                    setDslStatus(true, `${parsed.nodes.length}状態 / ${parsed.edges.length}遷移`);
                 } else {
                     const parsed = parseDSL(dsl.value);
                     applyParsed(parsed);
@@ -2003,8 +2079,8 @@ ${inner}
             project.diagrams[project.type] = state;
             project.type = t; history = []; future = [];
             buildPalette(); buildTemplateOptions();
-            $('textBtn').disabled = !(t === 'class' || t === 'sequence');
-            if (!(t === 'class' || t === 'sequence') && drawerOpen) toggleDrawer(false);
+            $('textBtn').disabled = !canText(t);
+            if (!canText(t) && drawerOpen) toggleDrawer(false);
             $('diagramType').value = t;
         } else { commit(); }
         const nd = (t === 'sequence')
@@ -2171,10 +2247,11 @@ ${inner}
         '  ・2件以上選択でプロパティに整列ボタン（左/中央/右/上下/等間隔）',
         '  ・🧲 グリッド吸着、▦ 自動整列（継承の階層レイアウト）',
         '',
-        '【テキスト双方向同期（クラス図・シーケンス図）】',
+        '【テキスト双方向同期（クラス図・シーケンス図・状態遷移図）】',
         '  ・</>テキスト でPlantUML風コードを表示',
         '  ・図の編集→テキストに即反映、テキスト編集→図に反映',
         '  ・シーケンスは A -> B : msg / alt…else…end / loop / opt 等',
+        '  ・状態遷移は [*] --> 待機 / A --> B : event',
         '',
         '【ショートカット】',
         '  Delete / Backspace … 選択を削除',
@@ -2262,7 +2339,7 @@ ${inner}
         recomputeSeq();
 
         $('diagramType').value = project.type;
-        $('textBtn').disabled = !(project.type === 'class' || project.type === 'sequence');
+        $('textBtn').disabled = !canText(project.type);
         buildPalette();
         buildTemplateOptions();
         render(); renderPanel(); fitView();
