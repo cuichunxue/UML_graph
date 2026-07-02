@@ -1188,8 +1188,11 @@
      * Pointer interaction
      * ============================================================ */
     let drag = null; // {kind, ...}
+    const activePtrs = new Map();   // タッチ用（ピンチズーム）
+    let pinch = null;
     canvas.addEventListener('pointerdown', e => {
         if (e.button !== 0) return;
+        if (pinch || (e.pointerType === 'touch' && activePtrs.size >= 2)) return;   // ピンチ中は編集しない
         if (isSeq()) { seqPointerDown(e); return; }
         const nodeEl = e.target.closest('[data-node]');
         const edgeEl = e.target.closest('[data-edge]');
@@ -1332,6 +1335,32 @@
         try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
         drag = null;
     });
+
+    /* ---- ピンチズーム（タッチ2本指・捕捉フェーズで先に処理） ---- */
+    canvas.addEventListener('pointerdown', e => {
+        if (e.pointerType !== 'touch') return;
+        activePtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (activePtrs.size === 2) {
+            if (drag) { if (drag.temp) drag.temp.remove(); if (drag.rect) drag.rect.remove(); drag = null; }   // 進行中の編集を中止
+            const [p1, p2] = [...activePtrs.values()];
+            pinch = { d0: Math.hypot(p1.x - p2.x, p1.y - p2.y) || 1, s0: view.s };
+        }
+    }, true);
+    canvas.addEventListener('pointermove', e => {
+        if (!activePtrs.has(e.pointerId)) return;
+        activePtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pinch && activePtrs.size >= 2) {
+            const [p1, p2] = [...activePtrs.values()];
+            const d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+            const r = canvas.getBoundingClientRect();
+            const target = Math.max(0.15, Math.min(4, pinch.s0 * d / pinch.d0));
+            zoomAt(target / view.s, (p1.x + p2.x) / 2 - r.left, (p1.y + p2.y) / 2 - r.top);
+            e.stopPropagation(); e.preventDefault();
+        }
+    }, true);
+    const endTouchPtr = e => { activePtrs.delete(e.pointerId); if (activePtrs.size < 2) pinch = null; };
+    canvas.addEventListener('pointerup', endTouchPtr, true);
+    canvas.addEventListener('pointercancel', endTouchPtr, true);
 
     canvas.addEventListener('dblclick', e => {
         if (isSeq()) { if (!e.target.closest('[data-part]')) createParticipant('participant'); return; }
@@ -1921,11 +1950,16 @@
     function deletePage(id) {
         if (project.pages.length <= 1) return toast('最後のページは削除できません', true);
         const pg = project.pages.find(p => p.id === id); if (!pg) return;
-        if (!confirm(`ページ「${pg.name}」を削除しますか？`)) return;
+        if (id === project.active) activePage().diagram = state;   // 最新内容を確定してから退避
         const idx = project.pages.findIndex(p => p.id === id);
         project.pages = project.pages.filter(p => p.id !== id);
         if (project.active === id) project.active = project.pages[Math.max(0, idx - 1)].id;
         reloadActive(); save();
+        toast(`ページ「${pg.name}」を削除しました`, false, { label: '元に戻す', fn: () => {
+            project.pages.splice(Math.min(idx, project.pages.length), 0, pg);
+            project.active = pg.id;
+            reloadActive(); save();
+        } });
     }
     function renamePage(id) {
         const pg = project.pages.find(p => p.id === id); if (!pg) return;
@@ -2077,6 +2111,32 @@
         return { x: 60, y: 60 };
     }
 
+    // テキスト再解析で関連が作り直されても、手動の配線調整
+    // （ベンド点・ラベル位置）を「両端の名前＋種別」で突き合わせて引き継ぐ
+    function carryEdgeGeometry(oldNodes, oldEdges, newNodes, newEdges) {
+        const nameOf = (nodes, id) => {
+            const n = nodes.find(x => x.id === id);
+            return n ? (n.kind === 'initial' ? '\u0000i' : n.kind === 'final' ? '\u0000f' : (n.name || '')) : id;
+        };
+        const key = (nodes, e, withType) => nameOf(nodes, e.from) + '\u0001' + nameOf(nodes, e.to) + (withType ? '\u0001' + e.type : '');
+        const geomOf = o => (o.waypoints || o.labelDx || o.labelDy) ? o : null;
+        for (const withType of [true, false]) {          // 1回目=種別込み、2回目=両端のみ
+            const pool = new Map();
+            for (const o of oldEdges) { if (!geomOf(o)) continue; const k = key(oldNodes, o, withType); (pool.get(k) || pool.set(k, []).get(k)).push(o); }
+            for (const e of newEdges) {
+                if (e.waypoints || e.labelDx || e.labelDy) continue;   // 既に引き継ぎ済み
+                const arr = pool.get(key(newNodes, e, withType));
+                if (arr && arr.length) {
+                    const o = arr.shift();
+                    if (o.waypoints) e.waypoints = o.waypoints;
+                    if (o.labelDx) e.labelDx = o.labelDx;
+                    if (o.labelDy) e.labelDy = o.labelDy;
+                    o.waypoints = null; o.labelDx = 0; o.labelDy = 0;  // 二重引き継ぎ防止
+                }
+            }
+        }
+    }
+
     function applyParsed(parsed) {
         const idByName = new Map();
         const placed = [];
@@ -2094,6 +2154,7 @@
         parsed.nodes.forEach((pn, i) => { if (pn.parent && idByName.has(pn.parent)) newNodes[i].parent = idByName.get(pn.parent); });
         const newEdges = parsed.edges.filter(e => idByName.has(e.fromName) && idByName.has(e.toName))
             .map(e => ({ id: uid('e'), from: idByName.get(e.fromName), to: idByName.get(e.toName), type: e.type, fromMult: e.fromMult || '', toMult: e.toMult || '', label: e.label || '' }));
+        carryEdgeGeometry(state.nodes, state.edges, newNodes, newEdges);
         // ノート（DSL対象外）は維持
         newNodes.push(...state.nodes.filter(n => n.kind === 'note'));
         state.nodes = newNodes; state.edges = newEdges;
@@ -2254,6 +2315,7 @@
             return pos;
         };
         const newNodes = parsed.nodes.map(pn => Object.assign({}, pn, findPos(pn)));
+        carryEdgeGeometry(existing, state.edges || [], newNodes, parsed.edges);
         newNodes.push(...existing.filter(n => n.kind === 'note'));
         state.nodes = newNodes; state.edges = parsed.edges;
         selection = null; selNodes = new Set();
@@ -2358,6 +2420,7 @@
         parsed.nodes.forEach((pn, i) => { if (pn.parent && idByName.has(pn.parent)) newNodes[i].parent = idByName.get(pn.parent); });
         const newEdges = parsed.edges.filter(e => idByName.has(e.fromName) && idByName.has(e.toName))
             .map(e => ({ id: uid('e'), from: idByName.get(e.fromName), to: idByName.get(e.toName), type: e.type, fromMult: '', toMult: '', label: e.label || '' }));
+        carryEdgeGeometry(existing, state.edges || [], newNodes, newEdges);
         newNodes.push(...existing.filter(n => n.kind === 'note'));
         state.nodes = newNodes; state.edges = newEdges;
         selection = null; selNodes = new Set();
@@ -2530,16 +2593,49 @@ ${inner}
     /* ============================================================
      * JSON save / load / share
      * ============================================================ */
+    function pageItems(pg) {
+        const d = pg.diagram;
+        return (pg.type === 'sequence') ? (d.participants || []).length + (d.messages || []).length : (d.nodes || []).length + (d.edges || []).length;
+    }
     $('exportJsonBtn').onclick = () => {
-        if (!itemCount()) return toast('保存する図がありません', true);
-        download(new Blob([JSON.stringify(Object.assign({ type: diagramType() }, state), null, 2)], { type: 'application/json' }), tsName('json'));
-        toast('JSONを保存しました');
+        activePage().diagram = state;
+        if (!project.pages.some(pg => pageItems(pg) > 0)) return toast('保存する図がありません', true);
+        const out = { app: 'uml-editor', version: 2, ortho: !!project.ortho, active: project.active, pages: project.pages };
+        download(new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' }), tsName('json'));
+        toast(`プロジェクトを保存しました（${project.pages.length}ページ）`);
     };
+    function loadProject(obj) {
+        const pages = obj.pages.filter(p => p && DIAGRAMS[p.type] && validDiagram(p.type, p.diagram))
+            .map(p => ({ id: p.id || ('pg' + pageSeq++), name: p.name || DIAGRAMS[p.type].label, type: p.type, diagram: p.diagram }));
+        if (!pages.length) throw new Error('bad');
+        project = { ortho: !!obj.ortho, pages, active: pages.some(p => p.id === obj.active) ? obj.active : pages[0].id };
+        recomputeSeq();
+        $('orthoBtn').classList.toggle('toggle-on', !!project.ortho);
+        reloadActive(); save();
+    }
     $('importBtn').onclick = () => $('fileInput').click();
     $('fileInput').onchange = e => {
         const f = e.target.files[0]; if (!f) return;
         const rd = new FileReader();
-        rd.onload = () => { try { loadState(JSON.parse(rd.result)); toast('読み込みました: ' + f.name); } catch (_) { toast('JSONの読込に失敗しました', true); } };
+        rd.onload = () => {
+            try {
+                const obj = JSON.parse(rd.result);
+                if (obj && Array.isArray(obj.pages)) {                 // プロジェクト（全ページ）
+                    if (!confirm(`プロジェクト全体（${obj.pages.length}ページ）を読み込み、現在の内容を置き換えます。よろしいですか？`)) return;
+                    loadProject(obj);
+                    toast('プロジェクトを読み込みました: ' + f.name);
+                } else if (obj && obj.diagrams && obj.type) {          // 旧5図種プロジェクト形式
+                    if (!confirm('旧形式のプロジェクトを読み込み、現在の内容を置き換えます。よろしいですか？')) return;
+                    const pages = [];
+                    for (const t in DIAGRAMS) { const d = obj.diagrams[t]; if (validDiagram(t, d)) pages.push({ id: 'pg' + pageSeq++, name: DIAGRAMS[t].label, type: t, diagram: d }); }
+                    loadProject({ ortho: obj.ortho, pages, active: null });
+                    toast('プロジェクトを読み込みました: ' + f.name);
+                } else {                                               // 単一ダイアグラム → 現在のページへ
+                    loadState(obj);
+                    toast('読み込みました: ' + f.name);
+                }
+            } catch (_) { toast('JSONの読込に失敗しました', true); }
+        };
         rd.readAsText(f); e.target.value = '';
     };
     $('shareBtn').onclick = async () => {
@@ -2547,7 +2643,7 @@ ${inner}
         const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(Object.assign({ type: diagramType() }, state)))));
         const url = location.origin + location.pathname + '#d=' + b64;
         try { await navigator.clipboard.writeText(url); toast('共有リンクをコピーしました'); }
-        catch (_) { history.replaceState(null, '', '#d=' + b64); toast('URLを更新しました'); }
+        catch (_) { window.history.replaceState(null, '', '#d=' + b64); toast('URLを更新しました（アドレスバーを共有）'); }
     };
 
     function loadState(obj) {
@@ -2674,11 +2770,20 @@ ${inner}
     /* ============================================================
      * UI helpers
      * ============================================================ */
-    function toast(t, err) {
+    function toast(t, err, action) {
         const host = $('toastHost'), el = document.createElement('div');
         el.className = 'toast' + (err ? ' err' : ''); el.textContent = t; host.append(el);
+        if (action) {
+            el.style.pointerEvents = 'auto';
+            const btn = document.createElement('button');
+            btn.textContent = action.label;
+            btn.style.cssText = 'margin-left:10px;padding:2px 10px;border:1px solid rgba(255,255,255,.5);border-radius:5px;background:none;color:inherit;font:inherit;cursor:pointer';
+            btn.onclick = () => { el.remove(); action.fn(); };
+            el.append(btn);
+        }
+        const ms = action ? 6000 : err ? 4000 : 2000;
+        setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 250); }, ms);
         requestAnimationFrame(() => el.classList.add('show'));
-        setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 250); }, err ? 4000 : 2000);
     }
     function setStatus(s, t) { const p = $('statusPill'); p.classList.toggle('ok', s === 'ok'); $('statusText').textContent = t; }
     let saveTimer;
@@ -2849,7 +2954,11 @@ ${inner}
         render(); renderPanel(); fitView();
         setStatus('', '準備完了');
 
-        if (shared && (Array.isArray(shared.nodes) ? shared.nodes.length : Array.isArray(shared.participants) && shared.participants.length)) { addPage(shared.type || 'class'); loadState(shared); }
+        if (shared && (Array.isArray(shared.nodes) ? shared.nodes.length : Array.isArray(shared.participants) && shared.participants.length)) {
+            addPage(shared.type || 'class'); loadState(shared);
+            // 再読込のたびに取り込んでページが増えないようハッシュを除去
+            window.history.replaceState(null, '', location.pathname + location.search);
+        }
     })();
     </script>
 </body>
